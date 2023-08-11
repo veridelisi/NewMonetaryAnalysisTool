@@ -1,9 +1,10 @@
 pip install evds --upgrade
 
+pip install  plotnine
+
 # Import pandas and numpy
 import pandas as pd
 import numpy as np
-pip install plotnine 
 
 # Import evds
 from evds import evdsAPI
@@ -19,7 +20,7 @@ evds = evdsAPI('k2QX6fe8eZ')
 # Extra Budgetary Funds | TP.AB.A21           Deposits of Non-Bank Sector | TP.AB.A22   Deposits of Public Sector | TP.AB.A25
 # Deposits of Banking Sector  | TP.AB.A18     Open Market Operations | TP.AB.A24
 
-df=evds.get_data(['TP.AB.A02','TP.AB.A03', 'TP.AB.A08','TP.AB.A10','TP.AB.A17','TP.AB.A18','TP.AB.A21','TP.AB.A24','TP.AB.A25','TP.AB.A22'], startdate="01-01-2013", enddate="09-08-2023")
+df=evds.get_data(['TP.AB.A02','TP.AB.A03', 'TP.AB.A08','TP.AB.A10','TP.AB.A17','TP.AB.A18','TP.AB.A21','TP.AB.A24','TP.AB.A25','TP.AB.A22'], startdate="01-01-2013", enddate="10-08-2023")
 
 # Rename columns
 new_column_names = ['Date','Foreign Assets', 'Domestic Assets', 'Revaluation', 'Total Foreign Liabilities', 'Currency Issued', 'Banking Reserves', 'Extra Funds', 'OMO', 'Deposits of Public Sector', 'Deposits of Non-Bank Sector']
@@ -66,7 +67,6 @@ df_diff
 df_diff['Banking Reserves 2']=df_diff['OMO'] + df_diff['Liquidity']
 df_diff
 
-
 # Import the necessary libraries
 import pandas as pd
 from plotnine import ggplot, aes, geom_col, theme_minimal, labs, scale_y_continuous, theme, element_text
@@ -93,13 +93,10 @@ p = (ggplot(df_yearly_long)
      + geom_col(position='stack', width=0.8)  # Adjust the width of the bars
      + scale_y_continuous(labels=lambda l: [f'{x/1e6:.0f}M' for x in l])  # Format y-axis labels in millions
      + theme_minimal()
-     + labs(title="Yearly Stacked Bar Chart", x="Year", y="Value (Millions)")
-     + theme(axis_text_x=element_text(angle=45, hjust=1, size=8))  # Rotate x-axis labels and adjust the size of tick labels
-     + theme(figure_size=(12, 6))  # Adjust width and height of the graph
+     + labs(title="Liquidity Situation and CBRT OMO ", x="Year", y="Value (Millions)")
+     + theme(axis_text_x=element_text(angle=45, hjust=0.5, size=8))  # Center x-axis labels and adjust the size of tick labels
+     + theme(figure_size=(10, 6), plot_title=element_text(hjust=0.5))  # Center the plot title
 )
 
 # Display the plot
 print(p)
-
-
-
