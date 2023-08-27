@@ -10,7 +10,7 @@ import numpy as np
 from evds import evdsAPI
 
 # Please put your  CBRT API key {https://evds2.tcmb.gov.tr-Profile Page-API Key}
-evds = evdsAPI('k2QX6fe8eZ')
+evds = evdsAPI('...........')
 
 # We download datas in the range 2013-2023
 # https://evds2.tcmb.gov.tr/index.php?/evds/DataGroupLink/2/bie_abanlbil/en
