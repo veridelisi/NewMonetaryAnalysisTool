@@ -18,7 +18,7 @@ evds = evdsAPI('..........')
 # Total Foreign Liabilities | TP.AB.A10       Currency Issued | TP.AB.A17  
 # Extra Budgetary Funds | TP.AB.A21           Deposits of Non-Bank Sector | TP.AB.A22   Deposits of Public Sector | TP.AB.A25
 # Deposits of Banking Sector  | TP.AB.A18     Open Market Operations | TP.AB.A24
-
+#You can change the frequency in the end of the following code [ default version is startdate="12-08-2023", enddate="24-08-2023" ]
 df=evds.get_data(['TP.AB.A02','TP.AB.A03', 'TP.AB.A08','TP.AB.A10','TP.AB.A17','TP.AB.A18','TP.AB.A21','TP.AB.A24','TP.AB.A25','TP.AB.A22'], startdate="12-08-2023", enddate="24-08-2023")
 
 # Rename columns
@@ -66,6 +66,7 @@ df_diff
 #df_diff['Banking Reserves 2']=df_diff['OMO'] + df_diff['Liquidity']
 #df_diff
 
+# OMO and Liquidity Visualization
 # Import the required libraries
 from plotnine import ggplot, aes, geom_col, theme_minimal, labs, scale_y_continuous, theme, element_text
 
@@ -93,9 +94,7 @@ p = (
 print(p)
 
 
-# Import the required libraries
-from plotnine import ggplot, aes, geom_col, theme_minimal, labs, scale_y_continuous, theme, element_text
-
+# Liquidity  Components' Visualization
 
 
 # Calculate the liquidity components for the same period
