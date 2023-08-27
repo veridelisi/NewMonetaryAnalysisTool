@@ -20,6 +20,7 @@ evds = evdsAPI('...........')
 # Extra Budgetary Funds | TP.AB.A21           Deposits of Non-Bank Sector | TP.AB.A22   Deposits of Public Sector | TP.AB.A25
 # Deposits of Banking Sector  | TP.AB.A18     Open Market Operations | TP.AB.A24
 
+#You can change the frequency in the end of the following code [ default version is startdate="01-01-2013", enddate="10-08-2023" ]
 df=evds.get_data(['TP.AB.A02','TP.AB.A03', 'TP.AB.A08','TP.AB.A10','TP.AB.A17','TP.AB.A18','TP.AB.A21','TP.AB.A24','TP.AB.A25','TP.AB.A22'], startdate="01-01-2013", enddate="10-08-2023")
 
 # Rename columns
