@@ -5,13 +5,13 @@
 
 This repository contains a Python script for fetching, processing, and visualizing data from the Turkish Central Bank's Analytical Balance Sheet. The focus is on analyzing liquidity and the CBRT OMO (Open Market Operations) over a specified time range.
 
-Article: https://www.researchgate.net/publication/342637770_NEW_MONETARY_ANALYSIS_TOOL_THE_DAILY_LIQUIDITY_DATASET"
+["NEW MONETARY ANALYSIS TOOL: THE DAILY LIQUIDITY DATASET"](https://www.researchgate.net/publication/342637770_NEW_MONETARY_ANALYSIS_TOOL_THE_DAILY_LIQUIDITY_DATASET)
 
 ## Installation
 
 Ensure you have the required packages installed by running the following commands:
 
-pip install evds --upgrade
+pip install evds --upgrade <br>
 pip install plotnine
 
 
