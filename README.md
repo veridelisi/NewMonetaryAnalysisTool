@@ -12,27 +12,21 @@ Ensure you have the required packages installed by running the following command
 
 ```bash
 pip install evds --upgrade
-pip install plotnine
+pip install plotnine```
 
 
-Usage
+## Usage
+
 Obtain a CBRT API key from [CBRT Profile Page](https://evds2.tcmb.gov.tr-Profile Page-API Key).
 Replace 'YOUR_CBRT_API_KEY' in the script with your actual CBRT API key.
 Adjust the date range and other parameters as needed.
 Run the script to fetch data, process it, and generate visualizations.
-Data Source
+
+## Data Source
 The script utilizes the evds library to fetch data from the Central Bank Analytical Balance Sheet. You can customize the data parameters and frequency as needed.
 
-Visualization
+## Visualization
 The script produces visualizations using the plotnine library, illustrating the liquidity situation and CBRT OMO over the specified time range.
 
-Files
-script.py: The main Python script for data fetching, processing, and visualization.
-README.md: This file, providing an overview of the repository.
-Acknowledgments
-evds library: Used for fetching data from the Central Bank of the Republic of Turkey.
-plotnine library: Utilized for creating visualizations.
-License
-This project is licensed under the MIT License - see the LICENSE.md file for details.
 
 Feel free to customize and extend the script for your specific needs!
