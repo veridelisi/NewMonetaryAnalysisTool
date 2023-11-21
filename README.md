@@ -10,9 +10,8 @@ Article: https://www.researchgate.net/publication/342637770_NEW_MONETARY_ANALYSI
 
 Ensure you have the required packages installed by running the following commands:
 
-```bash
 pip install evds --upgrade
-pip install plotnine```
+pip install plotnine
 
 
 ## Usage
