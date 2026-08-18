@@ -15,7 +15,7 @@ from matplotlib.ticker import FuncFormatter
 # ---------------------------------------------------------------------------
 
 # https://evds3.tcmb.gov.tr -> Profil sayfanizdan alacaginiz API anahtari
-API_KEY = "....."
+API_KEY = "Ak2QX6fe8eZA"
 
 BASE_URL = "https://evds3.tcmb.gov.tr/igmevdsms-dis/"
 
