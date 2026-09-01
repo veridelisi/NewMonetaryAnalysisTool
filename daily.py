@@ -15,7 +15,7 @@ from matplotlib.ticker import FuncFormatter
 # ---------------------------------------------------------------------------
 
 # https://evds3.tcmb.gov.tr -> Profil sayfanizdan alacaginiz API anahtari
-API_KEY = "Ak2QX6fe8eZA"
+API_KEY = "k2QX6fe8eZ"
 
 BASE_URL = "https://evds3.tcmb.gov.tr/igmevdsms-dis/"
 
@@ -30,8 +30,8 @@ SERIES = [
     "TP.AB.A18", "TP.AB.A21", "TP.AB.A24", "TP.AB.A25", "TP.AB.A22",
 ]
 
-START_DATE = "01-08-2026"   # dd-mm-yyyy — kisa/gunluk bir donem ornegi
-END_DATE = "14-08-2026"     # dd-mm-yyyy — gunluk cubuklarin okunakli olmasi icin dar tuttuk
+START_DATE = "20-08-2026"   # dd-mm-yyyy — kisa/gunluk bir donem ornegi
+END_DATE = "31-08-2026"     # dd-mm-yyyy — gunluk cubuklarin okunakli olmasi icin dar tuttuk
 
 
 # ---------------------------------------------------------------------------
@@ -167,19 +167,19 @@ fig, ax = plt.subplots(figsize=(11, 6))
 width = 0.5
 # LS (genis, arkada) ile OMO (dar, onde) AYNI x konumunda ustuste
 # ciziliyor - yan yana degil.
-ax.bar(x, ls, width=width, label="LS", color="#9DC3E6",
+ax.bar(x, ls, width=width, label="Likidite Durumu", color="#9DC3E6",
        edgecolor="black", linewidth=0.6, zorder=2)
-ax.bar(x, omo, width=width, label="OMO", color="#ED7D31",
+ax.bar(x, omo, width=width, label="APİ", color="#ED7D31",
        edgecolor="black", linewidth=0.6, zorder=3)
 ax.plot(x, br, color="black", linestyle="--", marker="o",
-        markersize=5, linewidth=1.4, label="BR", zorder=4)
+        markersize=5, linewidth=1.4, label="Bankalar Mevduatı", zorder=4)
 
 ax.axhline(0, color="black", linewidth=0.8)
 ax.yaxis.set_major_formatter(FuncFormatter(turkce_binlik))
 ax.set_xticks(x)
 ax.set_xticklabels(gunler, rotation=45, ha="right", fontsize=9)
 
-ax.set_title("Likidite Durumu, Açık Piyasa İşlemleri ve Banka Rezervleri (Günlük)",
+ax.set_title("Likidite Durumu, Açık Piyasa İşlemleri ve Banka Mevduatları (Günlük)",
               fontsize=13)
 ax.grid(axis="y", color="#D9D9D9", linewidth=0.6, zorder=0)
 ax.set_axisbelow(True)
