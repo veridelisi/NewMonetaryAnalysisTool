@@ -395,6 +395,8 @@ def create_main_chart(df, unit):
         marker_color=liquidity_colors,
         marker_line_color="rgba(0,0,0,0.35)",
         marker_line_width=0.6,
+        opacity=0.55,
+        width=0.55,
         hovertemplate="%{x}<br>Likidite Durumu: %{customdata}<extra></extra>",
         customdata=[format_tr_with_unit(v, unit_label_for(unit)) for v in df["Liquidity"]],
     )
@@ -406,6 +408,7 @@ def create_main_chart(df, unit):
         marker_line_color="rgba(0,0,0,0.35)",
         marker_line_width=0.6,
         opacity=0.75,
+        width=0.3,
         hovertemplate="%{x}<br>APİ Katkısı: %{customdata}<extra></extra>",
         customdata=[format_tr_with_unit(v, unit_label_for(unit)) for v in df["OMO"]],
     )
@@ -425,7 +428,7 @@ def create_main_chart(df, unit):
     )
 
     fig.update_layout(
-        barmode="group",
+        barmode="overlay",
         title="Likidite Durumu, Net APİ Katkısı ve Bankalar Mevduatı Değişimi",
         yaxis_title=unit_label_for(unit).capitalize(),
         template="plotly_white",
