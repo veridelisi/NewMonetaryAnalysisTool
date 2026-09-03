@@ -797,14 +797,17 @@ with tab_4:
 
     st.markdown(
         """
-        * **Net Dış Varlıklar:** Önce stok seviyesinde hesaplanır ($\text{Dış Varlıklar} - \text{Toplam Dış Yükümlülükler$), ardından bu serinin birinci farkı alınır.
-        * **APİ Katkısı:** TCMB analitik bilançosunda pasif tarafta izlenen Açık Piyasa İşlemleri serisinin birinci farkı, bilanço işaret yapısı gereği $-1$ ile çarpılır.
+        * **Net Dış Varlıklar:** Önce stok seviyesinde hesaplanır (aşağıdaki formüle bakın), ardından bu serinin birinci farkı alınır.
         """,
         unsafe_allow_html=True,
     )
+    
+    st.latex(r"\text{Net Dış Varlıklar} = \text{Dış Varlıklar} - \text{Toplam Dış Yükümlülükler}")
 
     st.markdown(
         """
+        * **APİ Katkısı:** TCMB analitik bilançosunda pasif tarafta izlenen Açık Piyasa İşlemleri serisinin birinci farkı, bilanço işaret yapısı gereği $-1$ ile çarpılır.
+        
         <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 1.2rem; border-radius: 8px; margin-top: 1rem; margin-bottom: 1.2rem;">
         <b>2. Kontrol Mekanizması:</b><br>
         Tüm kalemler birinci fark ($\Delta$) bazında hesaplandığı için kontrol ilişkisi <b>mevduat değişimleri</b> üzerinden kurulur:
