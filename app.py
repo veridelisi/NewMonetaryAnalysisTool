@@ -1,19 +1,87 @@
+"""TCMB Analitik Bilanço: Likidite Analizi
+
+Hesaplama mantığı (DEĞİŞTİRİLMEMİŞTİR):
+
+    Likidite Durumu
+        = ΔNet Dış Varlıklar + ΔİçVarlıklar + ΔDeğerleme Hesabı
+          − ΔDolaşımdaki Para − ΔFon Hesapları
+          − ΔKamu Mevduatı − ΔBanka Dışı Kesim Mevduatı
+
+    Net Dış Varlıklar = Dış Varlıklar − Toplam Dış Yükümlülükler
+
+    Likidite Durumu + ΔNet APİ = ΔBankaların TCMB'deki Mevduatı
+
+TP.AB.A24 (APİ) serisinin birinci farkı, analitik bilançodaki işaret
+yapısı nedeniyle -1 ile çarpılır. Bu kural değiştirilmemiştir.
+"""
+
 from datetime import date, timedelta
 from io import BytesIO
 
-import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+# --------------------------------------------------------------------------
+# Sayfa ayarları ve stil
+# --------------------------------------------------------------------------
 
 st.set_page_config(
     page_title="TCMB Likidite Analizi",
     page_icon="🏦",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        max-width: 1200px;
+    }
+    div[data-testid="stMetric"] {
+        background-color: #F7F9FB;
+        border: 1px solid #E3E8EE;
+        border-radius: 10px;
+        padding: 0.9rem 0.9rem 0.6rem 0.9rem;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.85rem;
+        color: #4A5568;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.35rem;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+    h1 {
+        font-size: 1.65rem !important;
+    }
+    .method-box {
+        background-color: #F0F4F8;
+        border-left: 4px solid #2C5282;
+        padding: 0.9rem 1.1rem;
+        border-radius: 6px;
+        font-size: 0.92rem;
+        margin-bottom: 1rem;
+    }
+    @media (max-width: 640px) {
+        h1 { font-size: 1.3rem !important; }
+        div[data-testid="stMetricValue"] { font-size: 1.05rem; }
+        .block-container { padding-left: 0.6rem; padding-right: 0.6rem; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# --------------------------------------------------------------------------
+# Sabitler
+# --------------------------------------------------------------------------
 
 BASE_URL = "https://evds3.tcmb.gov.tr/igmevdsms-dis/"
 
@@ -47,8 +115,8 @@ TURKISH_NAMES = {
     "Net Foreign Assets": "Net Dış Varlıklar",
     "Domestic Assets": "İç Varlıklar",
     "Revaluation": "Değerleme Hesabı",
-    "Currency Issued": "Emisyon",
-    "Extra Funds": "Bütçe Dışı Fonlar",
+    "Currency Issued": "Dolaşımdaki Para",
+    "Extra Funds": "Fon Hesapları",
     "Deposits of Public Sector": "Kamu Mevduatı",
     "Deposits of Non-Bank Sector": "Banka Dışı Kesim Mevduatı",
     "OMO": "APİ",
@@ -68,6 +136,7 @@ COMPONENTS = [
     "Deposits of Non-Bank Sector",
 ]
 
+# Bileşenlerin Likidite Durumu kimliğine katkı işareti (DEĞİŞTİRİLMEMİŞTİR)
 SIGNS = {
     "Net Foreign Assets": 1,
     "Domestic Assets": 1,
@@ -78,22 +147,66 @@ SIGNS = {
     "Deposits of Non-Bank Sector": -1,
 }
 
-COLORS = {
-    "Net Foreign Assets": "#4C72B0",
-    "Domestic Assets": "#55A868",
-    "Revaluation": "#C44E52",
-    "Currency Issued": "#8172B2",
-    "Extra Funds": "#CCB974",
-    "Deposits of Public Sector": "#64B5CD",
-    "Deposits of Non-Bank Sector": "#DD8452",
+COMPONENT_COLORS = {
+    "Net Foreign Assets": "#2C5282",
+    "Domestic Assets": "#2F855A",
+    "Revaluation": "#805AD5",
+    "Currency Issued": "#DD6B20",
+    "Extra Funds": "#B7791F",
+    "Deposits of Public Sector": "#C53030",
+    "Deposits of Non-Bank Sector": "#B83280",
 }
 
+POSITIVE_COLOR = "#2F855A"   # likidite sağlayıcı: yeşil
+NEGATIVE_COLOR = "#C53030"   # likidite çekici: kırmızı
+RESERVE_COLOR = "#1A202C"    # bankalar mevduatı: koyu lacivert/siyah
 
-def format_turkish_number(value, _position=None):
-    """Sayilari 1.234,5 biciminde gosterir."""
-    formatted = f"{value:,.1f}"
-    return formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+FREQ_LABELS = ["Günlük", "Haftalık", "Aylık", "Yıllık"]
+FREQ_CODES = {
+    "Haftalık": ["W-FRI"],
+    "Aylık": ["ME", "M"],
+    "Yıllık": ["YE", "Y"],
+}
+LOOKBACK_DAYS = {
+    "Günlük": 10,
+    "Haftalık": 25,
+    "Aylık": 50,
+    "Yıllık": 400,
+}
 
+RESIDUAL_WARN_THRESHOLD_MILLION = 50.0  # milyon TL cinsinden tolerans
+
+METHOD_SOURCE_URL = (
+    "https://ekonomista.pte.pl/pdf-155448-82266"
+    "?filename=A%20New%20Monetary%20Analysis.pdf"
+)
+
+
+# --------------------------------------------------------------------------
+# Yardımcı biçimlendirme fonksiyonları
+# --------------------------------------------------------------------------
+
+def format_tr_number(value, decimals=1):
+    """Sayıyı 1.234,5 bicimine cevirir (binlik nokta, ondalik virgul)."""
+    if pd.isna(value):
+        return "—"
+    formatted = f"{abs(value):,.{decimals}f}"
+    formatted = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+    sign = "+" if value > 0 else ("−" if value < 0 else "")
+    return f"{sign}{formatted}"
+
+
+def format_tr_with_unit(value, unit_label, decimals=1):
+    return f"{format_tr_number(value, decimals)} {unit_label}"
+
+
+def unit_label_for(unit):
+    return "milyar TL" if unit == "Milyar TL" else "milyon TL"
+
+
+# --------------------------------------------------------------------------
+# Veri çekme
+# --------------------------------------------------------------------------
 
 def get_api_key():
     try:
@@ -103,21 +216,18 @@ def get_api_key():
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_evds3(start_date, end_date, api_key):
+def fetch_evds3(start_date_str, end_date_str, api_key, _cache_bust=0):
     url = (
         f"{BASE_URL}series={'-'.join(SERIES)}"
-        f"&startDate={start_date}&endDate={end_date}&type=json"
+        f"&startDate={start_date_str}&endDate={end_date_str}&type=json"
     )
     try:
-        response = requests.get(
-            url,
-            headers={"key": api_key},
-            timeout=45,
-        )
+        response = requests.get(url, headers={"key": api_key}, timeout=45)
         response.raise_for_status()
     except requests.RequestException as error:
         raise RuntimeError(
-            "EVDS servisine bağlanılamadı. Tarihleri ve API anahtarını kontrol edin."
+            "EVDS servisine bağlanılamadı. İnternet bağlantınızı, tarih "
+            "aralığını ve API anahtarını kontrol edin."
         ) from error
 
     try:
@@ -127,27 +237,28 @@ def fetch_evds3(start_date, end_date, api_key):
         raise RuntimeError("EVDS beklenen biçimde veri döndürmedi.") from error
 
     if not items:
-        raise ValueError("Seçilen tarih aralığında veri bulunamadı.")
+        raise ValueError("Seçilen tarih aralığında EVDS'de veri bulunamadı.")
 
     return pd.DataFrame(items)
 
 
-def prepare_data(raw):
+# --------------------------------------------------------------------------
+# Veri hazırlama (stok seviyesi)
+# --------------------------------------------------------------------------
+
+def prepare_stock_data(raw):
     date_candidates = [
-        column
-        for column in raw.columns
-        if column.strip().lower() in ("tarih", "date")
+        c for c in raw.columns if c.strip().lower() in ("tarih", "date")
     ]
     if not date_candidates:
         raise ValueError(
             "EVDS yanıtında tarih sütunu bulunamadı. "
             f"Gelen sütunlar: {', '.join(raw.columns)}"
         )
-
     date_column = date_candidates[0]
     df = raw.rename(columns={date_column: "Date", **SERIES_RENAME}).copy()
 
-    missing = [name for name in SERIES_RENAME.values() if name not in df.columns]
+    missing = [n for n in SERIES_RENAME.values() if n not in df.columns]
     if missing:
         raise ValueError(
             "EVDS yanıtında beklenen seriler bulunamadı: " + ", ".join(missing)
@@ -155,43 +266,84 @@ def prepare_data(raw):
 
     df = df[["Date", *SERIES_RENAME.values()]]
     df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+    df = df.dropna(subset=["Date"])
 
     value_columns = list(SERIES_RENAME.values())
     df[value_columns] = df[value_columns].apply(pd.to_numeric, errors="coerce")
-    df = df.dropna(subset=["Date", *value_columns]).sort_values("Date")
-    df = df.drop_duplicates(subset="Date", keep="last").set_index("Date")
+    df = df.sort_values("Date").drop_duplicates(subset="Date", keep="last")
+    df = df.set_index("Date")
+
+    # İzole (tek günlük) eksik gözlemleri, o serideki bir önceki gözlemle
+    # doldur; bir serideki tek eksik değer yüzünden tüm satırı kaybetme.
+    for col in value_columns:
+        df[col] = df[col].ffill(limit=2)
+
+    # Hâlâ tamamen boş satır varsa (ör. seri tümüyle kesintiye uğramışsa) at.
+    df = df.dropna(subset=value_columns, how="all")
+    df = df.dropna(subset=value_columns)
 
     if len(df) < 2:
         raise ValueError(
-            "Birinci farkın hesaplanabilmesi için en az iki iş gününe ait veri gerekir."
+            "Birinci farkın hesaplanabilmesi için en az iki iş gününe ait "
+            "geçerli veri gerekir. Tarih aralığını genişletin."
         )
 
-    df["Net Foreign Assets"] = (
-        df["Foreign Assets"] - df["Total Foreign Liabilities"]
-    )
+    df["Net Foreign Assets"] = df["Foreign Assets"] - df["Total Foreign Liabilities"]
     df = df.drop(columns=["Foreign Assets", "Total Foreign Liabilities"])
-
     net_foreign_assets = df.pop("Net Foreign Assets")
     df.insert(0, "Net Foreign Assets", net_foreign_assets)
 
-    diff = df.diff().iloc[1:].copy()
-    diff["Liquidity"] = (
-        diff["Net Foreign Assets"]
-        + diff["Domestic Assets"]
-        + diff["Revaluation"]
-        - diff["Currency Issued"]
-        - diff["Extra Funds"]
-        - diff["Deposits of Public Sector"]
-        - diff["Deposits of Non-Bank Sector"]
+    return df.sort_index()
+
+
+# --------------------------------------------------------------------------
+# Frekans dönüşümü ve fark hesaplama
+# --------------------------------------------------------------------------
+
+def resample_stock(stock_df, freq_label):
+    if freq_label == "Günlük":
+        return stock_df
+    codes = FREQ_CODES[freq_label]
+    last_error = None
+    for code in codes:
+        try:
+            resampled = stock_df.resample(code).last()
+            return resampled.dropna(how="all")
+        except Exception as error:  # pandas surum farkliligi
+            last_error = error
+            continue
+    raise RuntimeError(f"Frekans dönüştürülemedi ({freq_label}): {last_error}")
+
+
+def compute_diffs(stock_df, freq_label):
+    period_stock = resample_stock(stock_df, freq_label)
+    diffs = period_stock.diff().dropna(how="all")
+
+    if diffs.empty:
+        raise ValueError(
+            "Seçilen tarih aralığı ve sıklık için fark hesaplanamadı. "
+            "Daha geniş bir tarih aralığı seçmeyi deneyin."
+        )
+
+    diffs["Liquidity"] = (
+        diffs["Net Foreign Assets"]
+        + diffs["Domestic Assets"]
+        + diffs["Revaluation"]
+        - diffs["Currency Issued"]
+        - diffs["Extra Funds"]
+        - diffs["Deposits of Public Sector"]
+        - diffs["Deposits of Non-Bank Sector"]
     )
 
-    # TCMB analitik bilancosunda pasif tarafta izlenen APİ'nin isaretini ceviriyoruz.
-    diff["OMO"] = -diff["OMO"]
-    diff["Calculated Banking Reserves"] = diff["Liquidity"] + diff["OMO"]
-    diff["Control Difference"] = (
-        diff["Calculated Banking Reserves"] - diff["Banking Reserves"]
+    # TCMB analitik bilançosunda pasif tarafta izlenen APİ'nin işaretini
+    # çeviriyoruz. (DEĞİŞTİRİLMEMİŞTİR)
+    diffs["OMO"] = -diffs["OMO"]
+
+    diffs["Calculated Banking Reserves"] = diffs["Liquidity"] + diffs["OMO"]
+    diffs["Control Difference"] = (
+        diffs["Calculated Banking Reserves"] - diffs["Banking Reserves"]
     )
-    return diff
+    return diffs
 
 
 def scale_data(df, unit):
@@ -199,111 +351,158 @@ def scale_data(df, unit):
     return df / divisor
 
 
+# --------------------------------------------------------------------------
+# Grafik oluşturma (Plotly)
+# --------------------------------------------------------------------------
+
+def _tick_step(n_obs):
+    if n_obs <= 15:
+        return 1
+    if n_obs <= 45:
+        return 3
+    if n_obs <= 120:
+        return 7
+    return max(1, n_obs // 10)
+
+
+def render_plot(fig, key=None):
+    config = {"displaylogo": False, "responsive": True}
+    try:
+        st.plotly_chart(fig, width="stretch", config=config, key=key)
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, config=config, key=key)
+
+
 def create_main_chart(df, unit):
-    x = np.arange(len(df))
-    labels = df.index.strftime("%d-%m-%Y")
+    n = len(df)
+    labels = df.index.strftime("%d.%m.%Y")
+    step = _tick_step(n)
+    tick_idx = list(range(0, n, step))
 
-    fig, ax = plt.subplots(figsize=(12, 6.5))
-    ax.bar(
-        x,
-        df["Liquidity"],
-        width=0.55,
-        label="Likidite Durumu",
-        color="#9DC3E6",
-        edgecolor="black",
-        linewidth=0.6,
-        zorder=2,
+    liquidity_colors = [
+        POSITIVE_COLOR if v >= 0 else NEGATIVE_COLOR for v in df["Liquidity"]
+    ]
+    omo_colors = [POSITIVE_COLOR if v >= 0 else NEGATIVE_COLOR for v in df["OMO"]]
+
+    marker_size = 7 if n <= 45 else (4 if n <= 120 else 3)
+    line_mode = "lines+markers" if n <= 120 else "lines"
+
+    fig = go.Figure()
+    fig.add_bar(
+        x=labels,
+        y=df["Liquidity"],
+        name="Likidite Durumu",
+        marker_color=liquidity_colors,
+        marker_line_color="rgba(0,0,0,0.35)",
+        marker_line_width=0.6,
+        hovertemplate="%{x}<br>Likidite Durumu: %{customdata}<extra></extra>",
+        customdata=[format_tr_with_unit(v, unit_label_for(unit)) for v in df["Liquidity"]],
     )
-    ax.bar(
-        x,
-        df["OMO"],
-        width=0.55,
-        label="APİ",
-        color="#ED7D31",
-        edgecolor="black",
-        linewidth=0.6,
-        zorder=3,
+    fig.add_bar(
+        x=labels,
+        y=df["OMO"],
+        name="APİ (Net Fonlama Değişimi)",
+        marker_color=omo_colors,
+        marker_line_color="rgba(0,0,0,0.35)",
+        marker_line_width=0.6,
+        opacity=0.75,
+        hovertemplate="%{x}<br>APİ Katkısı: %{customdata}<extra></extra>",
+        customdata=[format_tr_with_unit(v, unit_label_for(unit)) for v in df["OMO"]],
     )
-    ax.plot(
-        x,
-        df["Banking Reserves"],
-        color="black",
-        linestyle="--",
-        marker="o",
-        markersize=5,
-        linewidth=1.4,
-        label="Bankalar Mevduatı",
-        zorder=4,
+    fig.add_trace(
+        go.Scatter(
+            x=labels,
+            y=df["Banking Reserves"],
+            name="Bankalar Mevduatı (Değişim)",
+            mode=line_mode,
+            line=dict(color=RESERVE_COLOR, width=2, dash="dot"),
+            marker=dict(size=marker_size, color=RESERVE_COLOR),
+            hovertemplate="%{x}<br>Bankalar Mevduatı Değişimi: %{customdata}<extra></extra>",
+            customdata=[
+                format_tr_with_unit(v, unit_label_for(unit)) for v in df["Banking Reserves"]
+            ],
+        )
     )
 
-    ax.axhline(0, color="black", linewidth=0.8)
-    ax.yaxis.set_major_formatter(FuncFormatter(format_turkish_number))
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
-    ax.set_ylabel(unit)
-    ax.set_title(
-        "Likidite Durumu, Açık Piyasa İşlemleri ve Bankalar Mevduatı (Günlük)",
-        fontsize=13,
+    fig.update_layout(
+        barmode="group",
+        title="Likidite Durumu, Net APİ Katkısı ve Bankalar Mevduatı Değişimi",
+        yaxis_title=unit_label_for(unit).capitalize(),
+        template="plotly_white",
+        height=460,
+        margin=dict(l=10, r=10, t=50, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5),
+        hovermode="x unified",
     )
-    ax.grid(axis="y", color="#D9D9D9", linewidth=0.6, zorder=0)
-    ax.set_axisbelow(True)
-    ax.legend(
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.2),
-        ncol=3,
-        frameon=False,
-        fontsize=10,
+    fig.update_yaxes(zeroline=True, zerolinewidth=2, zerolinecolor="black")
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=[labels[i] for i in tick_idx],
+        ticktext=[labels[i] for i in tick_idx],
+        tickangle=-45,
     )
-    fig.tight_layout()
+    if n > 60:
+        fig.update_xaxes(rangeslider_visible=True)
     return fig
 
 
 def create_components_chart(df, unit):
-    x = np.arange(len(df))
-    labels = df.index.strftime("%d-%m-%Y")
-    positive_bottom = np.zeros(len(df))
-    negative_bottom = np.zeros(len(df))
+    n = len(df)
+    labels = df.index.strftime("%d.%m.%Y")
+    step = _tick_step(n)
+    tick_idx = list(range(0, n, step))
 
-    fig, ax = plt.subplots(figsize=(12, 6.5))
-    for column in COMPONENTS:
-        values = df[column].to_numpy() * SIGNS[column]
-        bottom = np.where(values >= 0, positive_bottom, negative_bottom)
-        ax.bar(
-            x,
-            values,
-            width=0.7,
-            bottom=bottom,
-            label=TURKISH_NAMES[column],
-            color=COLORS[column],
-            edgecolor="black",
-            linewidth=0.4,
-            zorder=2,
+    fig = go.Figure()
+    for col in COMPONENTS:
+        signed_values = df[col] * SIGNS[col]
+        raw_values = df[col]
+        custom = np.stack(
+            [
+                [format_tr_with_unit(v, unit_label_for(unit)) for v in raw_values],
+                [format_tr_with_unit(v, unit_label_for(unit)) for v in signed_values],
+            ],
+            axis=-1,
         )
-        positive_bottom = np.where(
-            values >= 0, positive_bottom + values, positive_bottom
-        )
-        negative_bottom = np.where(
-            values < 0, negative_bottom + values, negative_bottom
+        fig.add_bar(
+            x=labels,
+            y=signed_values,
+            name=TURKISH_NAMES[col],
+            marker_color=COMPONENT_COLORS[col],
+            marker_line_color="rgba(0,0,0,0.25)",
+            marker_line_width=0.4,
+            customdata=custom,
+            hovertemplate=(
+                TURKISH_NAMES[col]
+                + "<br>Ham bilanço değişimi: %{customdata[0]}"
+                + "<br>Likiditeye katkısı: %{customdata[1]}<extra></extra>"
+            ),
         )
 
-    ax.axhline(0, color="black", linewidth=0.8)
-    ax.yaxis.set_major_formatter(FuncFormatter(format_turkish_number))
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
-    ax.set_ylabel(unit)
-    ax.set_title("Likidite Bileşenleri (Günlük)", fontsize=13)
-    ax.grid(axis="y", color="#D9D9D9", linewidth=0.6, zorder=0)
-    ax.set_axisbelow(True)
-    ax.legend(
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.22),
-        ncol=3,
-        frameon=False,
-        fontsize=9,
+    fig.update_layout(
+        barmode="relative",
+        title="Likidite Bileşenleri",
+        yaxis_title=unit_label_for(unit).capitalize(),
+        template="plotly_white",
+        height=480,
+        margin=dict(l=10, r=10, t=50, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.45, xanchor="center", x=0.5),
+        hovermode="closest",
     )
-    fig.tight_layout()
+    fig.update_yaxes(zeroline=True, zerolinewidth=2, zerolinecolor="black")
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=[labels[i] for i in tick_idx],
+        ticktext=[labels[i] for i in tick_idx],
+        tickangle=-45,
+    )
+    if n > 60:
+        fig.update_xaxes(rangeslider_visible=True)
     return fig
 
+
+# --------------------------------------------------------------------------
+# Excel dışa aktarım
+# --------------------------------------------------------------------------
 
 def to_excel(df):
     output = BytesIO()
@@ -315,31 +514,55 @@ def to_excel(df):
     return output.getvalue()
 
 
+def select_row_count(df, key):
+    options = {"Son 10": 10, "Son 25": 25, "Son 50": 50, "Tümü": None}
+    choice = st.radio(
+        "Gösterilecek gözlem sayısı",
+        list(options.keys()),
+        index=1,
+        horizontal=True,
+        key=key,
+    )
+    n = options[choice]
+    return df.tail(n) if n else df
+
+
+# --------------------------------------------------------------------------
+# Ana uygulama
+# --------------------------------------------------------------------------
+
 st.title("🏦 TCMB Analitik Bilanço: Likidite Analizi")
-st.caption(
-    "TCMB analitik bilanço verilerinden günlük likidite durumu, açık piyasa "
-    "işlemleri ve bankalar mevduatı değişimini hesaplar."
+
+st.markdown(
+    f"""
+    <div class="method-box">
+    <b>Yöntem:</b> TCMB analitik bilanço kalemlerinin birinci farkları üzerinden
+    <b>Likidite Durumu</b> hesaplanır; bu değer <b>Net APİ katkısı</b> ile
+    toplandığında <b>Bankaların TCMB'deki mevduatındaki değişime</b> eşit olmalıdır
+    (kontrol ilişkisi). Kaynak: Engin Yılmaz,
+    <a href="{METHOD_SOURCE_URL}" target="_blank">
+    "A New Monetary Analysis Tool: The Daily Liquidity Dataset"</a>,
+    Ekonomista, 2020; TCMB EVDS3 verileri.
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 with st.sidebar:
     st.header("Analiz Ayarları")
     default_end = date.today()
     default_start = default_end - timedelta(days=14)
-    start_date = st.date_input(
-        "Başlangıç tarihi",
-        value=default_start,
-        format="DD/MM/YYYY",
-    )
-    end_date = st.date_input(
-        "Bitiş tarihi",
-        value=default_end,
-        format="DD/MM/YYYY",
-    )
+    start_date = st.date_input("Başlangıç tarihi", value=default_start, format="DD/MM/YYYY")
+    end_date = st.date_input("Bitiş tarihi", value=default_end, format="DD/MM/YYYY")
+    frequency = st.selectbox("Veri sıklığı", FREQ_LABELS, index=0)
     unit = st.radio("Gösterim birimi", ["Milyar TL", "Milyon TL"], index=0)
-    run_analysis = st.button("Verileri Getir", type="primary", use_container_width=True)
+
+    col_a, col_b = st.columns(2)
+    fetch_clicked = col_a.button("Verileri Getir", type="primary", use_container_width=True)
+    refresh_clicked = col_b.button("Verileri Yenile", use_container_width=True)
 
     st.divider()
-    st.caption("Veri kaynağı: TCMB EVDS3")
+    st.caption("Veri kaynağı: TCMB EVDS3 · Analitik Bilanço")
 
 api_key = get_api_key()
 if not api_key:
@@ -353,117 +576,179 @@ if start_date > end_date:
     st.error("Başlangıç tarihi bitiş tarihinden sonra olamaz.")
     st.stop()
 
-if run_analysis:
+if "cache_bust" not in st.session_state:
+    st.session_state["cache_bust"] = 0
+
+if refresh_clicked:
+    st.session_state["cache_bust"] += 1
+    fetch_clicked = True
+
+if fetch_clicked:
+    lookback = LOOKBACK_DAYS[frequency]
+    fetch_start = start_date - timedelta(days=lookback)
     with st.spinner("EVDS verileri alınıyor ve hesaplamalar yapılıyor..."):
         try:
             raw_data = fetch_evds3(
-                start_date.strftime("%d-%m-%Y"),
+                fetch_start.strftime("%d-%m-%Y"),
                 end_date.strftime("%d-%m-%Y"),
                 api_key,
+                st.session_state["cache_bust"],
             )
-            calculated_data = prepare_data(raw_data)
-            display_data = scale_data(calculated_data, unit)
+            stock_data = prepare_stock_data(raw_data)
+            diffs = compute_diffs(stock_data, frequency)
+            diffs = diffs.loc[
+                (diffs.index >= pd.Timestamp(start_date))
+                & (diffs.index <= pd.Timestamp(end_date))
+            ]
+            if diffs.empty:
+                raise ValueError(
+                    "Seçilen tarih aralığında, seçilen sıklıkta tamamlanmış bir "
+                    "dönem bulunamadı. Tarih aralığını genişletmeyi deneyin."
+                )
         except (RuntimeError, ValueError) as error:
             st.error(str(error))
             st.stop()
 
-    st.session_state["calculated_data"] = calculated_data
-    st.session_state["display_data"] = display_data
+    st.session_state["calculated_data"] = diffs
     st.session_state["unit"] = unit
+    st.session_state["frequency"] = frequency
     st.session_state["period"] = (start_date, end_date)
 
-if "display_data" not in st.session_state:
-    st.info("Analize başlamak için tarih aralığını seçip **Verileri Getir** düğmesine basın.")
+if "calculated_data" not in st.session_state:
+    st.info("Analize başlamak için tarih aralığını, sıklığı seçip **Verileri Getir** düğmesine basın.")
     st.stop()
 
-display_data = st.session_state["display_data"]
 calculated_data = st.session_state["calculated_data"]
 active_unit = st.session_state["unit"]
+active_freq = st.session_state["frequency"]
 period_start, period_end = st.session_state["period"]
+display_data = scale_data(calculated_data, active_unit)
+u_label = unit_label_for(active_unit)
 
 st.success(
     f"{period_start.strftime('%d.%m.%Y')}–{period_end.strftime('%d.%m.%Y')} "
-    f"dönemi için {len(display_data)} günlük değişim hesaplandı."
+    f"dönemi için {active_freq.lower()} bazda {len(display_data)} gözlem hesaplandı."
 )
 
+# Kontrol farkı uyarısı (residual, milyon TL bazında ham veri üzerinden)
+residual_raw = calculated_data["Control Difference"]
+flagged = residual_raw[residual_raw.abs() > RESIDUAL_WARN_THRESHOLD_MILLION]
+if not flagged.empty:
+    flagged_dates = ", ".join(flagged.index.strftime("%d.%m.%Y"))
+    st.warning(
+        "Şu dönemlerde kontrol farkı (Hesaplanan Bankalar Mevduatı − Gerçekleşen "
+        f"Bankalar Mevduatı) sıfırdan belirgin şekilde sapıyor: {flagged_dates}. "
+        "Veri kesintisi, revize veri veya tatil günü kaynaklı olabilir."
+    )
+
+# Özet kartlar
 latest = display_data.iloc[-1]
-metric_1, metric_2, metric_3, metric_4 = st.columns(4)
-metric_1.metric("Son Gün Likidite", format_turkish_number(latest["Liquidity"]))
-metric_2.metric("Son Gün APİ", format_turkish_number(latest["OMO"]))
-metric_3.metric(
-    "Bankalar Mevduatı",
-    format_turkish_number(latest["Banking Reserves"]),
-)
-metric_4.metric(
-    "Kontrol Farkı",
-    format_turkish_number(latest["Control Difference"]),
-)
-st.caption(f"Özet değerlerin birimi: {active_unit}")
+latest_date_label = display_data.index[-1].strftime("%d.%m.%Y")
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric(f"Likidite Durumu ({latest_date_label})", format_tr_with_unit(latest["Liquidity"], u_label))
+c2.metric("Net APİ Katkısı", format_tr_with_unit(latest["OMO"], u_label))
+c3.metric("Bankalar Mevduatı Değişimi", format_tr_with_unit(latest["Banking Reserves"], u_label))
+c4.metric("Kontrol Farkı", format_tr_with_unit(latest["Control Difference"], u_label))
 
 tab_1, tab_2, tab_3, tab_4 = st.tabs(
     ["Genel Görünüm", "Likidite Bileşenleri", "Veri Tablosu", "Yöntem"]
 )
 
 with tab_1:
-    main_figure = create_main_chart(display_data, active_unit)
-    st.pyplot(main_figure, use_container_width=True)
-    plt.close(main_figure)
+    main_fig = create_main_chart(display_data, active_unit)
+    render_plot(main_fig, key="main_chart")
     st.caption(
-        "Likidite Durumu ve APİ sütunları aynı tarih konumunda üst üste "
-        "çizilmektedir; kesikli çizgi bankalar mevduatındaki günlük değişimi gösterir."
+        "Likidite Durumu ve APİ sütunları yan yana, Bankalar Mevduatı değişimi "
+        "noktalı çizgi olarak gösterilir. Renk, değerin işaretine göre değişir."
     )
+
+    with st.expander("Hesaplama tablosunu göster"):
+        table_cols = [
+            "Liquidity", "OMO", "Banking Reserves",
+            "Calculated Banking Reserves", "Control Difference",
+        ]
+        table_main = display_data[table_cols].rename(columns=TURKISH_NAMES).copy()
+        table_main.index = table_main.index.strftime("%d.%m.%Y")
+        table_main.index.name = "Tarih"
+        table_main_view = select_row_count(table_main, key="main_table_rows")
+        st.dataframe(
+            table_main_view.style.format(format_tr_number),
+            width="stretch" if hasattr(st, "dataframe") else None,
+        )
+        st.caption(f"Tüm değerler {u_label} cinsindendir.")
 
 with tab_2:
-    components_figure = create_components_chart(display_data, active_unit)
-    st.pyplot(components_figure, use_container_width=True)
-    plt.close(components_figure)
+    comp_fig = create_components_chart(display_data, active_unit)
+    render_plot(comp_fig, key="components_chart")
     st.caption(
-        "Emisyon, bütçe dışı fonlar, kamu mevduatı ve banka dışı kesim mevduatı "
-        "likiditeyi azaltan yöndeki işaretleriyle gösterilmiştir."
+        "Net Dış Varlıklar, İç Varlıklar ve Değerleme Hesabı likidite artırıcı; "
+        "Dolaşımdaki Para, Fon Hesapları, Kamu Mevduatı ve Banka Dışı Kesim "
+        "Mevduatı likidite azaltıcı yönde işaretlenmiştir."
     )
 
+    with st.expander("Bileşen tablosunu göster"):
+        comp_cols = COMPONENTS + ["Liquidity"]
+        table_comp = display_data[comp_cols].rename(columns=TURKISH_NAMES).copy()
+        table_comp.index = table_comp.index.strftime("%d.%m.%Y")
+        table_comp.index.name = "Tarih"
+        table_comp_view = select_row_count(table_comp, key="comp_table_rows")
+        st.dataframe(table_comp_view.style.format(format_tr_number))
+        st.caption(
+            f"Tüm değerler {u_label} cinsindendir; işaretler ham bilanço "
+            "değişimini gösterir (likidite kimliğine katkı için tablodaki "
+            "işaret kurallarına bakınız)."
+        )
+
 with tab_3:
-    table_columns = [
-        "Liquidity",
-        "OMO",
-        "Banking Reserves",
-        "Calculated Banking Reserves",
-        "Control Difference",
+    full_cols = [
+        "Liquidity", "OMO", "Banking Reserves",
+        "Calculated Banking Reserves", "Control Difference",
         *COMPONENTS,
     ]
-    table = display_data[table_columns].rename(columns=TURKISH_NAMES).copy()
-    table.index = table.index.strftime("%d-%m-%Y")
-    table.index.name = "Tarih"
-    st.dataframe(table.style.format(format_turkish_number), use_container_width=True)
+    full_table = display_data[full_cols].rename(columns=TURKISH_NAMES).copy()
+    full_table.index = full_table.index.strftime("%d.%m.%Y")
+    full_table.index.name = "Tarih"
+    full_table_view = select_row_count(full_table, key="full_table_rows")
+    st.dataframe(full_table_view.style.format(format_tr_number))
+    st.caption(f"Tüm değerler {u_label} cinsindendir.")
+
     st.download_button(
         "Excel Olarak İndir",
         data=to_excel(calculated_data),
         file_name=(
-            f"TCMB_Likidite_Analizi_"
-            f"{period_start.strftime('%Y%m%d')}_{period_end.strftime('%Y%m%d')}.xlsx"
+            f"TCMB_Likidite_Analizi_{period_start.strftime('%Y%m%d')}_"
+            f"{period_end.strftime('%Y%m%d')}.xlsx"
         ),
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 with tab_4:
     st.markdown(
-        """
+        f"""
 ### Hesaplama yöntemi
 
-Günlük likidite durumu, TCMB analitik bilançosundaki ilgili kalemlerin birinci
-farkları kullanılarak hesaplanır:
+**Likidite Durumu = ΔNet Dış Varlıklar + ΔİçVarlıklar + ΔDeğerleme Hesabı
+− ΔDolaşımdaki Para − ΔFon Hesapları − ΔKamu Mevduatı
+− ΔBanka Dışı Kesim Mevduatı**
 
-**Likidite Durumu = Net Dış Varlıklar + İç Varlıklar + Değerleme Hesabı
-− Emisyon − Bütçe Dışı Fonlar − Kamu Mevduatı − Banka Dışı Kesim Mevduatı**
+Net Dış Varlıklar önce stok seviyesinde hesaplanır (Dış Varlıklar − Toplam
+Dış Yükümlülükler), farkı bu seviyeden alınır.
 
-TCMB analitik bilançosunda pasif tarafta gösterilen açık piyasa işlemlerinin
-işareti çevrilir. Kontrol ilişkisi şöyledir:
+TCMB analitik bilançosunda pasif tarafta izlenen açık piyasa işlemleri
+(APİ) serisinin birinci farkının işareti çevrilir:
 
 **Hesaplanan Bankalar Mevduatı = Likidite Durumu + APİ**
 
 **Kontrol Farkı = Hesaplanan Bankalar Mevduatı − Gerçekleşen Bankalar Mevduatı**
 
-Kaynak: Engin Yılmaz, *A New Monetary Analysis Tool: The Daily Liquidity Dataset*,
-Ekonomista, 2020; TCMB EVDS3 Analitik Bilanço verileri.
+Haftalık/aylık/yıllık sıklıkta hesaplama, günlük ortalama alınarak değil,
+her dönemin **son geçerli stok gözlemi** seçilip ardışık dönem sonları
+arasında fark alınarak yapılır.
+
+Kaynak: Engin Yılmaz, *A New Monetary Analysis Tool: The Daily Liquidity
+Dataset*, Ekonomista, 2020 —
+[çalışmaya bağlantı]({METHOD_SOURCE_URL}); TCMB EVDS3 Analitik Bilanço
+verileri.
         """
     )
