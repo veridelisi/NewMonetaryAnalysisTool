@@ -806,14 +806,15 @@ with tab_4:
     st.markdown(
         """
         <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 1.2rem; border-radius: 8px; margin-top: 1rem; margin-bottom: 1.2rem;">
-        <b>2. Kontrol Mekanizması:</b>
+        <b>2. Kontrol Mekanizması:</b><br>
+        Tüm kalemler birinci fark ($\Delta$) bazında hesaplandığı için kontrol ilişkisi <b>mevduat değişimleri</b> üzerinden kurulur:
         </div>
         """,
         unsafe_allow_html=True,
     )
     
-    st.latex(r"\text{Hesaplanan Bankalar Mevduatı} = \text{Likidite Durumu} + \text{APİ}")
-    st.latex(r"\text{Kontrol Farkı} = \text{Hesaplanan Bankalar Mevduatı} - \text{Gerçekleşen Bankalar Mevduatı}")
+    st.latex(r"\Delta\text{Hesaplanan Bankalar Mevduatı} = \text{Likidite Durumu} + \text{Net APİ}")
+    st.latex(r"\text{Kontrol Farkı} = \Delta\text{Hesaplanan Bankalar Mevduatı} - \Delta\text{Gerçekleşen Bankalar Mevduatı}")
 
     st.markdown(
         """
