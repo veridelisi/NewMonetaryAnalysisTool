@@ -396,7 +396,7 @@ def create_main_chart(df, unit):
         marker_line_color="rgba(0,0,0,0.35)",
         marker_line_width=0.6,
         opacity=0.55,
-        width=0.55,
+        width=0.3,
         hovertemplate="%{x}<br>Likidite Durumu: %{customdata}<extra></extra>",
         customdata=[format_tr_with_unit(v, unit_label_for(unit)) for v in df["Liquidity"]],
     )
