@@ -205,7 +205,7 @@ def unit_label_for(unit):
 
 
 # --------------------------------------------------------------------------
-# Veri çekme
+# Veri çekme (Parçalı / Chunk tabanlı)
 # --------------------------------------------------------------------------
 
 def get_api_key():
@@ -216,30 +216,102 @@ def get_api_key():
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_evds3(start_date_str, end_date_str, api_key, _cache_bust=0):
+def fetch_evds_chunk(series_list, start_date_str, end_date_str, api_key):
     url = (
-        f"{BASE_URL}series={'-'.join(SERIES)}"
+        f"{BASE_URL}series={'-'.join(series_list)}"
         f"&startDate={start_date_str}&endDate={end_date_str}&type=json"
-    )
+    """
     try:
         response = requests.get(url, headers={"key": api_key}, timeout=45)
         response.raise_for_status()
     except requests.RequestException as error:
         raise RuntimeError(
-            "EVDS servisine bağlanılamadı. İnternet bağlantınızı, tarih "
-            "aralığını ve API anahtarını kontrol edin."
+            f"EVDS servisine ({start_date_str} - {end_date_str}) bağlanılamadı. "
+            "İnternet bağlantınızı veya API anahtarınızı kontrol edin."
         ) from error
 
     try:
         payload = response.json()
-        items = payload["items"]
+        items = payload.get("items", [])
     except (ValueError, KeyError, TypeError) as error:
-        raise RuntimeError("EVDS beklenen biçimde veri döndürmedi.") from error
+        raise RuntimeError(f"EVDS beklenmeyen veri biçimi döndürdü ({start_date_str} - {end_date_str}).") from error
 
-    if not items:
+    return items
+
+
+def fetch_evds_chunked(start_date, end_date, api_key):
+    """Uzun tarih aralıklarını yıllık parçalara bölerek çeker ve birleştirir."""
+    # Başlangıç yılından önceki yılın son gününü de dahil et (ilk yıl farkı için)
+    effective_start = date(start_date.year - 1, 12, 15) if start_date.year > 2005 else start_date
+    if effective_start < start_date:
+        # Daha güvenli olması için bir önceki yılın aralığını da kapsayacak şekilde parça aralıkları oluşturalım
+        pass
+
+    # Yıllık chunk aralıkları oluşturalım
+    current_year = start_date.year - 1  # Önceki yıl sonu verisi için bir önceki yıldan başlatıyoruz
+    final_year = end_date.year
+
+    frames = []
+    years_to_fetch = range(current_year, final_year + 1)
+
+    for y in years_to_fetch:
+        p_start = date(y, 1, 1) if y > (start_date.year - 1) else date(y, 12, 1)
+        if y == start_date.year - 1:
+            p_start = date(y, 12, 15)  # Önceki yıl sonuna yakın bir tarih
+        
+        p_end = date(y, 12, 31)
+        
+        # Sınırları kullanıcı seçimlerine göre kırpalım
+        if y == current_year:
+            p_start_str = p_start.strftime("%d-%m-%Y")
+        elif y == start_date.year - 1:
+            p_start_str = date(start_date.year - 1, 12, 1).strftime("%d-%m-%Y")
+        else:
+            p_start_str = date(y, 1, 1).strftime("%d-%m-%Y")
+
+        if y == final_year:
+            p_end_str = end_date.strftime("%d-%m-%Y")
+        else:
+            p_end_str = date(y, 12, 31).strftime("%d-%m-%Y")
+
+        # Eğer başlangıç yılındaysak ve önceki yıl aralığı gerekiyorsa
+        if y == start_date.year - 1:
+            p_start_str = date(start_date.year - 1, 12, 1).strftime("%d-%m-%Y")
+            p_end_str = date(start_date.year - 1, 12, 31).strftime("%d-%m-%Y")
+
+        # Basitleştirilmiş yıllık chunk döngüsü: Her yıl için yıl başından yıl sonuna (veya bitiş tarihine)
+    
+    # Alternatif ve daha net chunk yöntemi: Her 365 günlük bloklar veya yıllık dilimler
+    all_items = []
+    
+    # Başlangıç tarihinden önceki yılın Aralık ayından bitiş tarihine kadar yıllık dilimler halinde çekelim
+    start_y = start_date.year - 1
+    end_y = end_date.year
+    
+    for yr in range(start_y, end_y + 1):
+        chunk_start = f"01-12-{yr}" if yr == start_y else f"01-01-{yr}"
+        if yr == start_y:
+            chunk_start = f"01-12-{start_y}"
+        
+        chunk_end = f"31-12-{yr}" if yr < end_y else end_date.strftime("%d-%m-%Y")
+        if yr == start_y:
+            chunk_end = f"31-12-{start_y}"
+
+        # Gerçek başlangıç/bitş sınırları
+        actual_s = date(start_y, 12, 1) if yr == start_y else max(date(yr, 1, 1), start_date - timedelta(days=35))
+        actual_e = date(start_y, 12, 31) if yr == start_y else min(date(yr, 12, 31), end_date)
+        
+        if actual_s > actual_e:
+            continue
+
+        items = fetch_evds_chunk(SERIES, actual_s.strftime("%d-%m-%Y"), actual_e.strftime("%d-%m-%Y"), api_key)
+        if items:
+            all_items.extend(items)
+
+    if not all_items:
         raise ValueError("Seçilen tarih aralığında EVDS'de veri bulunamadı.")
 
-    return pd.DataFrame(items)
+    return pd.DataFrame(all_items)
 
 
 # --------------------------------------------------------------------------
@@ -273,12 +345,10 @@ def prepare_stock_data(raw):
     df = df.sort_values("Date").drop_duplicates(subset="Date", keep="last")
     df = df.set_index("Date")
 
-    # İzole (tek günlük) eksik gözlemleri, o serideki bir önceki gözlemle
-    # doldur; bir serideki tek eksik değer yüzünden tüm satırı kaybetme.
+    # İzole (tek günlük) eksik gözlemleri doldur
     for col in value_columns:
         df[col] = df[col].ffill(limit=2)
 
-    # Hâlâ tamamen boş satır varsa (ör. seri tümüyle kesintiye uğramışsa) at.
     df = df.dropna(subset=value_columns, how="all")
     df = df.dropna(subset=value_columns)
 
@@ -303,13 +373,23 @@ def prepare_stock_data(raw):
 def resample_stock(stock_df, freq_label):
     if freq_label == "Günlük":
         return stock_df
-    codes = FREQ_CODES[freq_label]
+    
+    # Pandas sürüm uyumluluğu için güvenli alternatifler (YE / A vb.)
+    if freq_label == "Yıllık":
+        codes = ["YE", "Y", "A"]
+    elif freq_label == "Aylık":
+        codes = ["ME", "M"]
+    else:
+        codes = FREQ_CODES.get(freq_label, ["W-FRI"])
+
     last_error = None
     for code in codes:
         try:
             resampled = stock_df.resample(code).last()
-            return resampled.dropna(how="all")
-        except Exception as error:  # pandas surum farkliligi
+            cleaned = resampled.dropna(how="all")
+            if not cleaned.empty:
+                return cleaned
+        except Exception as error:
             last_error = error
             continue
     raise RuntimeError(f"Frekans dönüştürülemedi ({freq_label}): {last_error}")
@@ -335,8 +415,7 @@ def compute_diffs(stock_df, freq_label):
         - diffs["Deposits of Non-Bank Sector"]
     )
 
-    # TCMB analitik bilançosunda pasif tarafta izlenen APİ'nin işaretini
-    # çeviriyoruz. (DEĞİŞTİRİLMEMİŞTİR)
+    # TCMB analitik bilançosunda pasif tarafta izlenen APİ'nin işaretini çeviriyoruz
     diffs["OMO"] = -diffs["OMO"]
 
     diffs["Calculated Banking Reserves"] = diffs["Liquidity"] + diffs["OMO"]
@@ -587,18 +666,24 @@ if refresh_clicked:
     fetch_clicked = True
 
 if fetch_clicked:
-    lookback = LOOKBACK_DAYS[frequency]
-    fetch_start = start_date - timedelta(days=lookback)
-    with st.spinner("EVDS verileri alınıyor ve hesaplamalar yapılıyor..."):
+    with st.spinner("EVDS verileri parçalı olarak alınıyor ve hesaplamalar yapılıyor..."):
         try:
-            raw_data = fetch_evds3(
-                fetch_start.strftime("%d-%m-%Y"),
-                end_date.strftime("%d-%m-%Y"),
-                api_key,
-                st.session_state["cache_bust"],
-            )
+            # Parçalı veri çekme fonksiyonu çağrısı
+            raw_data_items = fetch_evds_chunked(start_date, end_date, api_key)
+            raw_data = pd.DataFrame(raw_data_items)
             stock_data = prepare_stock_data(raw_data)
+            
+            # Doğrulamalar
+            selected_start_year = start_date.year
+            assert stock_data.index.min().year <= selected_start_year, (
+                f"Ham veri başlangıç yılı ({stock_data.index.min().year}), "
+                f"istenen başlangıç yılından ({selected_start_year}) sonra!"
+            )
+            assert stock_data.index.max().date() <= end_date + timedelta(days=5)
+
             diffs = compute_diffs(stock_data, frequency)
+            
+            # Seçilen tarih aralığına filtreleme
             diffs = diffs.loc[
                 (diffs.index >= pd.Timestamp(start_date))
                 & (diffs.index <= pd.Timestamp(end_date))
@@ -608,11 +693,12 @@ if fetch_clicked:
                     "Seçilen tarih aralığında, seçilen sıklıkta tamamlanmış bir "
                     "dönem bulunamadı. Tarih aralığını genişletmeyi deneyin."
                 )
-        except (RuntimeError, ValueError) as error:
+        except (RuntimeError, ValueError, AssertionError) as error:
             st.error(str(error))
             st.stop()
 
     st.session_state["calculated_data"] = diffs
+    st.session_state["raw_stock_data"] = stock_data
     st.session_state["unit"] = unit
     st.session_state["frequency"] = frequency
     st.session_state["period"] = (start_date, end_date)
@@ -622,18 +708,24 @@ if "calculated_data" not in st.session_state:
     st.stop()
 
 calculated_data = st.session_state["calculated_data"]
+raw_stock_data = st.session_state.get("raw_stock_data", calculated_data)
 active_unit = st.session_state["unit"]
 active_freq = st.session_state["frequency"]
 period_start, period_end = st.session_state["period"]
 display_data = scale_data(calculated_data, active_unit)
 u_label = unit_label_for(active_unit)
 
-st.success(
-    f"{period_start.strftime('%d.%m.%Y')}–{period_end.strftime('%d.%m.%Y')} "
-    f"dönemi için {active_freq.lower()} bazda {len(display_data)} gözlem hesaplandı."
+# İstenen bilgi özet ekranı
+st.info(
+    f"""📋 **Veri Kapsamı Bilgileri:**
+* **İstenen dönem:** {period_start.strftime('%d.%m.%Y')}–{period_end.strftime('%d.%m.%Y')}
+* **Ham verinin kapsadığı dönem:** {raw_stock_data.index.min().strftime('%d.%m.%Y')}–{raw_stock_data.index.max().strftime('%d.%m.%Y')}
+* **Ham günlük gözlem sayısı:** {len(raw_stock_data):,d}
+* **Hesaplanan {active_freq.lower()} dönem sayısı:** {len(display_data)}
+"""
 )
 
-# Kontrol farkı uyarısı (residual, milyon TL bazında ham veri üzerinden)
+# Kontrol farkı uyarısı
 residual_raw = calculated_data["Control Difference"]
 flagged = residual_raw[residual_raw.abs() > RESIDUAL_WARN_THRESHOLD_MILLION]
 if not flagged.empty:
