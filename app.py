@@ -779,21 +779,56 @@ with tab_3:
     )
 
 with tab_4:
-    method_text = (
-        "### Hesaplama Yöntemi\n\n"
-        "**Likidite Durumu = ΔNet Dış Varlıklar + ΔİçVarlıklar + ΔDeğerleme Hesabı "
-        "− ΔDolaşımdaki Para − ΔFon Hesapları − ΔKamu Mevduatı "
-        "− ΔBanka Dışı Kesim Mevduatı**\n\n"
-        "Net Dış Varlıklar önce stok seviyesinde hesaplanır (Dış Varlıklar − Toplam "
-        "Dış Yükümlülükler), farkı bu seviyeden alınır.\n\n"
-        "TCMB analitik bilançosunda pasif tarafta izlenen açık piyasa işlemleri "
-        "(APİ) serisinin birinci farkının işareti çevrilir:\n\n"
-        "**Hesaplanan Bankalar Mevduatı = Likidite Durumu + API**\n\n"
-        "**Kontrol Farkı = Hesaplanan Bankalar Mevduatı − Gerçekleşen Bankalar Mevduatı**\n\n"
-        "Haftalık/aylık/yıllık sıklıkta hesaplama, günlük ortalama alınarak değil, "
-        "her dönemin **son geçerli stok gözlemi** seçilip ardışık dönem sonları "
-        "arasında fark alınarak yapılır.\n\n"
-        f"Kaynak: Engin Yılmaz, *A New Monetary Analysis Tool: The Daily Liquidity Dataset*, "
-        f"Ekonomista, 2020 — [çalışmaya bağlantı]({METHOD_SOURCE_URL}); TCMB EVDS3 Analitik Bilanço verileri."
+    st.markdown("### Hesaplama Yöntemi ve Detayları")
+    
+    st.markdown(
+        """
+        <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 1.2rem; border-radius: 8px; margin-bottom: 1.2rem;">
+        <b>1. Temel Hesaplama Mantığı (Likidite Özdeşliği):</b><br>
+        TCMB analitik bilanço kalemlerinin birinci farkları ($\Delta$) üzerinden piyasanın likidite durumu türetilir:
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    st.markdown(method_text)
+    
+    st.latex(
+        r"\text{Likidite Durumu} = \Delta\text{Net Dış Varlıklar} + \Delta\text{İç Varlıklar} + \Delta\text{Değerleme Hesabı} - \Delta\text{Dolaşımdaki Para} - \Delta\text{Fon Hesapları} - \Delta\text{Kamu Mevduatı} - \Delta\text{Banka Dışı Kesim Mevduatı}"
+    )
+
+    st.markdown(
+        """
+        * **Net Dış Varlıklar:** Önce stok seviyesinde hesaplanır ($\text{Dış Varlıklar} - \text{Toplam Dış Yükümlülükler$), ardından bu serinin birinci farkı alınır.
+        * **APİ Katkısı:** TCMB analitik bilançosunda pasif tarafta izlenen Açık Piyasa İşlemleri serisinin birinci farkı, bilanço işaret yapısı gereği $-1$ ile çarpılır.
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 1.2rem; border-radius: 8px; margin-top: 1rem; margin-bottom: 1.2rem;">
+        <b>2. Kontrol Mekanizması:</b>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    
+    st.latex(r"\text{Hesaplanan Bankalar Mevduatı} = \text{Likidite Durumu} + \text{APİ}")
+    st.latex(r"\text{Kontrol Farkı} = \text{Hesaplanan Bankalar Mevduatı} - \text{Gerçekleşen Bankalar Mevduatı}")
+
+    st.markdown(
+        """
+        <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 1.2rem; border-radius: 8px; margin-top: 1rem; margin-bottom: 1.2rem;">
+        <b>3. Frekans Dönüşümü ve Yıllık/Dönemsel Hesaplama Mantığı:</b><br>
+        Haftalık, aylık veya yıllık sıklıkta hesaplama yapılırken günlük ortalama alınmaz. Her dönemin <b>son geçerli stok gözlemi</b> seçilip ardışık dönem sonları arasında fark ($\Delta$) alınır.
+        </div>
+        
+        * **Yıllık Analizlerde Geriye Dönük Çekim:** Bir yılın (örneğin 2025) yıllık likidite değişimini hesaplayabilmek için sistem, <b>2025 yıl sonu stoku</b> ile bir önceki dönemin sonu olan <b>2024 yıl sonu stoku</b> arasındaki farkı alır. Bu nedenle sistem otomatik olarak bir önceki yılın sonunu da kapsayacak şekilde geriye dönük veri çeker ve ardından hedef yılı filtreleyerek sunar.
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
+    st.markdown(
+        f"*Kaynak: Engin Yılmaz, [\"A New Monetary Analysis Tool: The Daily Liquidity Dataset\"]({METHOD_SOURCE_URL}), "
+        f"Ekonomista, 2020; TCMB EVDS3 Analitik Bilanço verileri.*"
+    )
