@@ -9,7 +9,7 @@ Hesaplama mantığı (DEĞİŞTİRİLMEMİŞTİR):
 
     Net Dış Varlıklar = Dış Varlıklar − Toplam Dış Yükümlülükler
 
-    Likidite Durumu + ΔNet APİ = ΔBankaların TCMB'deki Mevduatı
+    Likidite Durumu + ΔAPİ = ΔBankaların TCMB'deki Mevduatı
 
 TP.AB.A24 (APİ) serisinin birinci farkı, analitik bilançodaki işaret
 yapısı nedeniyle -1 ile çarpılır. Bu kural değiştirilmemiştir.
@@ -69,10 +69,29 @@ st.markdown(
         font-size: 0.92rem;
         margin-bottom: 1rem;
     }
+    /* Mobilde grafiğe dokunulduğunda sayfanın dikey kaydırmasının
+       Plotly tarafından yakalanıp "takılıyormuş" hissi vermesini önler. */
+    .js-plotly-plot, .plot-container, .svg-container {
+        touch-action: pan-y !important;
+    }
+    div[data-testid="stElementContainer"]:has(.js-plotly-plot) {
+        overflow: hidden;
+        max-width: 100%;
+    }
+    button[data-baseweb="tab"] {
+        min-height: 2.6rem;
+        padding: 0.35rem 0.7rem;
+        font-size: 0.85rem;
+    }
+    div[data-testid="stButton"] button, div[data-testid="stDownloadButton"] button {
+        min-height: 2.6rem;
+        border-radius: 8px;
+    }
     @media (max-width: 640px) {
         h1 { font-size: 1.3rem !important; }
         div[data-testid="stMetricValue"] { font-size: 1.05rem; }
         .block-container { padding-left: 0.6rem; padding-right: 0.6rem; }
+        button[data-baseweb="tab"] { font-size: 0.78rem; padding: 0.3rem 0.4rem; }
     }
     </style>
     """,
@@ -162,6 +181,17 @@ NEGATIVE_COLOR = "#C53030"   # likidite çekici: kırmızı
 RESERVE_COLOR = "#1A202C"    # bankalar mevduatı: koyu lacivert/siyah
 
 FREQ_LABELS = ["Günlük", "Haftalık", "Aylık", "Yıllık"]
+FREQ_CODES = {
+    "Haftalık": ["W-FRI"],
+    "Aylık": ["ME", "M"],
+    "Yıllık": ["YE", "Y"],
+}
+LOOKBACK_DAYS = {
+    "Günlük": 10,
+    "Haftalık": 25,
+    "Aylık": 50,
+    "Yıllık": 400,
+}
 
 RESIDUAL_WARN_THRESHOLD_MILLION = 50.0  # milyon TL cinsinden tolerans
 
@@ -194,7 +224,7 @@ def unit_label_for(unit):
 
 
 # --------------------------------------------------------------------------
-# Veri çekme (Parçalara bölünmüş ve önbelleğe alınmış)
+# Veri çekme
 # --------------------------------------------------------------------------
 
 def get_api_key():
@@ -204,8 +234,28 @@ def get_api_key():
         return None
 
 
+def year_chunks(start_dt, end_dt):
+    """[start_dt, end_dt] aralığını takvim yılı parçalarına böler.
+
+    EVDS3'ün tek sorguda döndürdüğü gözlem sayısı sınırlı olduğundan, çok
+    yıllı günlük sorgular sessizce kırpılabiliyor (yalnızca en son ~birkaç
+    yılın verisi dönüyor). Her parça en fazla bir takvim yılı kapsadığından
+    (≈366 satır) bu sınıra takılma riski ortadan kalkar.
+    """
+    chunks = []
+    current_start = start_dt
+    while current_start <= end_dt:
+        year_end = date(current_start.year, 12, 31)
+        chunk_end = min(year_end, end_dt)
+        chunks.append((current_start, chunk_end))
+        current_start = chunk_end + timedelta(days=1)
+    return chunks
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_evds_chunk(series_tuple, start_date_str, end_date_str, api_key):
+def fetch_evds_chunk(series_tuple, start_date_str, end_date_str, api_key, _cache_bust=0):
+    """Tek bir tarih parçası için EVDS3'ten ham veri çeker (cache anahtarı
+    seri listesi, başlangıç/bitiş tarihi ve _cache_bust'a açıkça bağlıdır)."""
     url = (
         f"{BASE_URL}series={'-'.join(series_tuple)}"
         f"&startDate={start_date_str}&endDate={end_date_str}&type=json"
@@ -215,7 +265,7 @@ def fetch_evds_chunk(series_tuple, start_date_str, end_date_str, api_key):
         response.raise_for_status()
     except requests.RequestException as error:
         raise RuntimeError(
-            f"EVDS servisine bağlanılamadı ({start_date_str} - {end_date_str}). "
+            f"EVDS servisine bağlanılamadı ({start_date_str}–{end_date_str}). "
             "İnternet bağlantınızı, tarih aralığını ve API anahtarını kontrol edin."
         ) from error
 
@@ -224,53 +274,47 @@ def fetch_evds_chunk(series_tuple, start_date_str, end_date_str, api_key):
         items = payload["items"]
     except (ValueError, KeyError, TypeError) as error:
         raise RuntimeError(
-            f"EVDS beklenen biçimde veri döndürmedi ({start_date_str} - {end_date_str})."
+            f"EVDS beklenen biçimde veri döndürmedi ({start_date_str}–{end_date_str})."
         ) from error
 
-    return items
+    if not items:
+        raise ValueError(
+            f"{start_date_str}–{end_date_str} aralığında EVDS'de veri bulunamadı."
+        )
+
+    return pd.DataFrame(items)
 
 
-def fetch_all_evds_data(start_date, end_date, api_key, frequency):
-    """Uzun sorgulardaki satır sınırı kısıtlamasını aşmak için tarih aralığını 
-    yıllık parçalara böler. Yıllık veya diğer frekanslarda ilk dönemin farkının
-    doğru hesaplanabilmesi için başlangıç tarihinden önceki yılın sonunu da 
-    kapsayacak şekilde ek parça çeker.
+def fetch_evds_range(start_dt, end_dt, api_key, cache_bust):
+    """İstenen tüm aralığı yıllık parçalar hâlinde çekip birleştirir.
+
+    Bir parça başarısız olursa sessizce atlanmaz; hangi aralığın
+    çekilemediği toplanıp kullanıcıya açıkça bildirilir.
     """
-    if frequency == "Yıllık":
-        extended_start = date(start_date.year - 1, 1, 1)
-    else:
-        extended_start = start_date - timedelta(days=45)
-
-    chunks = []
-    current_start = extended_start
-    
-    while current_start <= end_date:
-        current_end = min(date(current_start.year, 12, 31), end_date)
-        if current_start > current_end:
-            break
-        chunks.append((current_start, current_end))
-        current_start = date(current_start.year + 1, 1, 1)
-
-    all_items = []
-    series_tuple = tuple(SERIES)
-
-    for chunk_start, chunk_end in chunks:
-        s_str = chunk_start.strftime("%d-%m-%Y")
-        e_str = chunk_end.strftime("%d-%m-%Y")
+    frames = []
+    failed = []
+    for chunk_start, chunk_end in year_chunks(start_dt, end_dt):
         try:
-            items = fetch_evds_chunk(series_tuple, s_str, e_str, api_key)
-            if items:
-                all_items.extend(items)
-        except Exception as error:
-            raise RuntimeError(
-                f"Parça çekilemedi ({s_str} - {e_str}): {str(error)}"
-            ) from error
+            frame = fetch_evds_chunk(
+                tuple(SERIES),
+                chunk_start.strftime("%d-%m-%Y"),
+                chunk_end.strftime("%d-%m-%Y"),
+                api_key,
+                cache_bust,
+            )
+            frames.append(frame)
+        except (RuntimeError, ValueError) as error:
+            failed.append(f"{chunk_start.strftime('%d.%m.%Y')}–{chunk_end.strftime('%d.%m.%Y')}: {error}")
 
-    if not all_items:
+    if failed:
+        raise RuntimeError(
+            "Şu tarih parçaları için veri çekilemedi: " + " | ".join(failed)
+        )
+    if not frames:
         raise ValueError("Seçilen tarih aralığında EVDS'de veri bulunamadı.")
 
-    raw_df = pd.DataFrame(all_items)
-    return raw_df
+    combined = pd.concat(frames, ignore_index=True)
+    return combined
 
 
 # --------------------------------------------------------------------------
@@ -304,9 +348,12 @@ def prepare_stock_data(raw):
     df = df.sort_values("Date").drop_duplicates(subset="Date", keep="last")
     df = df.set_index("Date")
 
+    # İzole (tek günlük) eksik gözlemleri, o serideki bir önceki gözlemle
+    # doldur; bir serideki tek eksik değer yüzünden tüm satırı kaybetme.
     for col in value_columns:
         df[col] = df[col].ffill(limit=2)
 
+    # Hâlâ tamamen boş satır varsa (ör. seri tümüyle kesintiye uğramışsa) at.
     df = df.dropna(subset=value_columns, how="all")
     df = df.dropna(subset=value_columns)
 
@@ -331,36 +378,21 @@ def prepare_stock_data(raw):
 def resample_stock(stock_df, freq_label):
     if freq_label == "Günlük":
         return stock_df
-    
-    if freq_label == "Haftalık":
-        codes = ["W-FRI", "W"]
-    elif freq_label == "Aylık":
-        codes = ["ME", "M"]
-    elif freq_label == "Yıllık":
-        codes = ["YE", "Y", "A"]
-    else:
-        codes = [freq_label]
-
+    codes = FREQ_CODES[freq_label]
     last_error = None
     for code in codes:
         try:
             resampled = stock_df.resample(code).last()
-            resampled = resampled.dropna(how="all")
-            if not resampled.empty:
-                return resampled
-        except Exception as error:
+            return resampled.dropna(how="all")
+        except Exception as error:  # pandas surum farkliligi
             last_error = error
             continue
     raise RuntimeError(f"Frekans dönüştürülemedi ({freq_label}): {last_error}")
 
 
-def compute_diffs(stock_df, freq_label, user_start_date):
+def compute_diffs(stock_df, freq_label):
     period_stock = resample_stock(stock_df, freq_label)
     diffs = period_stock.diff().dropna(how="all")
-
-    if freq_label == "Yıllık":
-        target_year = user_start_date.year
-        diffs = diffs.loc[diffs.index.year >= target_year]
 
     if diffs.empty:
         raise ValueError(
@@ -378,6 +410,8 @@ def compute_diffs(stock_df, freq_label, user_start_date):
         - diffs["Deposits of Non-Bank Sector"]
     )
 
+    # TCMB analitik bilançosunda pasif tarafta izlenen APİ'nin işaretini
+    # çeviriyoruz. (DEĞİŞTİRİLMEMİŞTİR)
     diffs["OMO"] = -diffs["OMO"]
 
     diffs["Calculated Banking Reserves"] = diffs["Liquidity"] + diffs["OMO"]
@@ -407,7 +441,15 @@ def _tick_step(n_obs):
 
 
 def render_plot(fig, key=None):
-    config = {"displaylogo": False, "responsive": True}
+    # scrollZoom kapalı ve modebar gizli: mobilde parmakla dokunma/kaydırma
+    # Plotly'nin zoom/pan davranışıyla çakışıp sayfayı "bozuk" göstermesin.
+    config = {
+        "displaylogo": False,
+        "responsive": True,
+        "scrollZoom": False,
+        "displayModeBar": False,
+        "doubleClick": False,
+    }
     try:
         st.plotly_chart(fig, width="stretch", config=config, key=key)
     except TypeError:
@@ -437,20 +479,20 @@ def create_main_chart(df, unit):
         marker_line_color="rgba(0,0,0,0.35)",
         marker_line_width=0.6,
         opacity=0.55,
-        width=0.3,
+        width=0.55,
         hovertemplate="%{x}<br>Likidite Durumu: %{customdata}<extra></extra>",
         customdata=[format_tr_with_unit(v, unit_label_for(unit)) for v in df["Liquidity"]],
     )
     fig.add_bar(
         x=labels,
         y=df["OMO"],
-        name="APİ (Net Fonlama Değişimi)",
+        name="ΔAPİ",
         marker_color=omo_colors,
         marker_line_color="rgba(0,0,0,0.35)",
         marker_line_width=0.6,
         opacity=0.75,
         width=0.3,
-        hovertemplate="%{x}<br>APİ Katkısı: %{customdata}<extra></extra>",
+        hovertemplate="%{x}<br>ΔAPİ: %{customdata}<extra></extra>",
         customdata=[format_tr_with_unit(v, unit_label_for(unit)) for v in df["OMO"]],
     )
     fig.add_trace(
@@ -470,7 +512,8 @@ def create_main_chart(df, unit):
 
     fig.update_layout(
         barmode="overlay",
-        title="Likidite Durumu, Net APİ Katkısı ve Bankalar Mevduatı Değişimi",
+        dragmode=False,
+        title="Likidite Durumu, ΔAPİ ve Bankalar Mevduatı Değişimi",
         yaxis_title=unit_label_for(unit).capitalize(),
         template="plotly_white",
         height=460,
@@ -484,6 +527,7 @@ def create_main_chart(df, unit):
         tickvals=[labels[i] for i in tick_idx],
         ticktext=[labels[i] for i in tick_idx],
         tickangle=-45,
+        fixedrange=True,
     )
     if n > 60:
         fig.update_xaxes(rangeslider_visible=True)
@@ -524,6 +568,7 @@ def create_components_chart(df, unit):
 
     fig.update_layout(
         barmode="relative",
+        dragmode=False,
         title="Likidite Bileşenleri",
         yaxis_title=unit_label_for(unit).capitalize(),
         template="plotly_white",
@@ -538,6 +583,7 @@ def create_components_chart(df, unit):
         tickvals=[labels[i] for i in tick_idx],
         ticktext=[labels[i] for i in tick_idx],
         tickangle=-45,
+        fixedrange=True,
     )
     if n > 60:
         fig.update_xaxes(rangeslider_visible=True)
@@ -581,7 +627,7 @@ st.markdown(
     f"""
     <div class="method-box">
     <b>Yöntem:</b> TCMB analitik bilanço kalemlerinin birinci farkları üzerinden
-    <b>Likidite Durumu</b> hesaplanır; bu değer <b>Net APİ katkısı</b> ile
+    <b>Likidite Durumu</b> hesaplanır; bu değer <b>APİ değişimi (ΔAPİ)</b> ile
     toplandığında <b>Bankaların TCMB'deki mevduatındaki değişime</b> eşit olmalıdır
     (kontrol ilişkisi). Kaynak: Engin Yılmaz,
     <a href="{METHOD_SOURCE_URL}" target="_blank">
@@ -628,39 +674,62 @@ if refresh_clicked:
     fetch_clicked = True
 
 if fetch_clicked:
-    with st.spinner("EVDS verileri parçalar halinde alınıyor ve hesaplamalar yapılıyor..."):
+    lookback = LOOKBACK_DAYS[frequency]
+    fetch_start = start_date - timedelta(days=lookback)
+    with st.spinner("EVDS verileri alınıyor ve hesaplamalar yapılıyor..."):
         try:
-            raw_data = fetch_all_evds_data(start_date, end_date, api_key, frequency)
+            raw_data = fetch_evds_range(
+                fetch_start, end_date, api_key, st.session_state["cache_bust"]
+            )
             stock_data = prepare_stock_data(raw_data)
-            
-            selected_start_year = start_date.year
-            assert stock_data.index.min().year <= selected_start_year, \
-                f"Ham veri başlangıç yılı ({stock_data.index.min().year}), istenen başlangıç yılından ({selected_start_year}) büyük!"
-            assert stock_data.index.max().date() <= end_date + timedelta(days=1), \
-                "Ham veri bitiş tarihi seçilen bitiş tarihinden sonrasını içeriyor."
 
-            diffs = compute_diffs(stock_data, frequency, start_date)
-            diffs = diffs.loc[
-                (diffs.index >= pd.Timestamp(start_date))
-                & (diffs.index <= pd.Timestamp(end_date))
+            raw_min = stock_data.index.min()
+            raw_max = stock_data.index.max()
+            raw_count = len(stock_data)
+
+            diffs_full = compute_diffs(stock_data, frequency)
+            diffs = diffs_full.loc[
+                (diffs_full.index >= pd.Timestamp(start_date))
+                & (diffs_full.index <= pd.Timestamp(end_date))
             ]
             if diffs.empty:
                 raise ValueError(
                     "Seçilen tarih aralığında, seçilen sıklıkta tamamlanmış bir "
                     "dönem bulunamadı. Tarih aralığını genişletmeyi deneyin."
                 )
-        except (RuntimeError, ValueError, AssertionError) as error:
+        except (RuntimeError, ValueError) as error:
             st.error(str(error))
             st.stop()
+
+    # Talep edilen başlangıcın gerçekten karşılanıp karşılanmadığını
+    # kullanıcıya açıkça bildir; sessizce farklı bir başlangıca kaymasın.
+    coverage_notes = []
+    if raw_min.date() > start_date:
+        coverage_notes.append(
+            f"Ham veri, istenen {start_date.strftime('%d.%m.%Y')} yerine "
+            f"{raw_min.strftime('%d.%m.%Y')} tarihinden itibaren başlıyor "
+            "(EVDS bu seriler için daha eskiye veri döndürmemiş olabilir)."
+        )
+    if diffs.index.min().date() > start_date and frequency != "Günlük":
+        coverage_notes.append(
+            f"Seçilen sıklıkta ilk hesaplanabilir dönem "
+            f"{diffs.index.min().strftime('%d.%m.%Y')} — önceki dönem sonu stok "
+            "verisi kapsam dışında kaldığından ilk kısmi dönem hesaplanamadı."
+        )
 
     st.session_state["calculated_data"] = diffs
     st.session_state["unit"] = unit
     st.session_state["frequency"] = frequency
     st.session_state["period"] = (start_date, end_date)
-    st.session_state["raw_info"] = {
-        "min_date": stock_data.index.min().strftime("%d.%m.%Y"),
-        "max_date": stock_data.index.max().strftime("%d.%m.%Y"),
-        "count": len(stock_data)
+    st.session_state["coverage"] = {
+        "requested_start": start_date,
+        "requested_end": end_date,
+        "fetch_start": fetch_start,
+        "raw_min": raw_min,
+        "raw_max": raw_max,
+        "raw_count": raw_count,
+        "period_count": len(diffs),
+        "notes": coverage_notes,
     }
 
 if "calculated_data" not in st.session_state:
@@ -671,7 +740,6 @@ calculated_data = st.session_state["calculated_data"]
 active_unit = st.session_state["unit"]
 active_freq = st.session_state["frequency"]
 period_start, period_end = st.session_state["period"]
-raw_info = st.session_state.get("raw_info", {"min_date": "-", "max_date": "-", "count": 0})
 display_data = scale_data(calculated_data, active_unit)
 u_label = unit_label_for(active_unit)
 
@@ -680,13 +748,7 @@ st.success(
     f"dönemi için {active_freq.lower()} bazda {len(display_data)} gözlem hesaplandı."
 )
 
-with st.expander("📊 Veri Kapsamı ve Teşhis Bilgileri", expanded=True):
-    col_inf1, col_inf2, col_inf3, col_inf4 = st.columns(4)
-    col_inf1.metric("İstenen Dönem", f"{period_start.strftime('%d.%m.%Y')} – {period_end.strftime('%d.%m.%Y')}")
-    col_inf2.metric("Ham Veri Kapsamı", f"{raw_info['min_date']} – {raw_info['max_date']}")
-    col_inf3.metric("Ham Günlük Gözlem", f"{raw_info['count']:,}".replace(",", "."))
-    col_inf4.metric("Hesaplanan Dönem Sayısı", len(display_data))
-
+# Kontrol farkı uyarısı (residual, milyon TL bazında ham veri üzerinden)
 residual_raw = calculated_data["Control Difference"]
 flagged = residual_raw[residual_raw.abs() > RESIDUAL_WARN_THRESHOLD_MILLION]
 if not flagged.empty:
@@ -697,25 +759,27 @@ if not flagged.empty:
         "Veri kesintisi, revize veri veya tatil günü kaynaklı olabilir."
     )
 
+# Özet kartlar
 latest = display_data.iloc[-1]
 latest_date_label = display_data.index[-1].strftime("%d.%m.%Y")
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric(f"Likidite Durumu ({latest_date_label})", format_tr_with_unit(latest["Liquidity"], u_label))
-c2.metric("Net APİ Katkısı", format_tr_with_unit(latest["OMO"], u_label))
+c2.metric("ΔAPİ", format_tr_with_unit(latest["OMO"], u_label))
 c3.metric("Bankalar Mevduatı Değişimi", format_tr_with_unit(latest["Banking Reserves"], u_label))
 c4.metric("Kontrol Farkı", format_tr_with_unit(latest["Control Difference"], u_label))
 
-tab_1, tab_2, tab_3, tab_4 = st.tabs(
-    ["Genel Görünüm", "Likidite Bileşenleri", "Veri Tablosu", "Yöntem"]
+tab_1, tab_2, tab_3, tab_4, tab_5 = st.tabs(
+    ["Genel Görünüm", "Likidite Bileşenleri", "Veri Tablosu", "Yöntem", "Veri Kapsamı"]
 )
 
 with tab_1:
     main_fig = create_main_chart(display_data, active_unit)
     render_plot(main_fig, key="main_chart")
     st.caption(
-        "Likidite Durumu ve APİ sütunları yan yana, Bankalar Mevduatı değişimi "
-        "noktalı çizgi olarak gösterilir. Renk, değerin işaretine göre değişir."
+        "Likidite Durumu ve ΔAPİ aynı tarih konumunda üst üste (dıştaki geniş "
+        "çubuk Likidite Durumu, içteki dar çubuk ΔAPİ), Bankalar Mevduatı "
+        "değişimi noktalı çizgi olarak gösterilir. Renk, değerin işaretine göre değişir."
     )
 
     with st.expander("Hesaplama tablosunu göster"):
@@ -779,60 +843,76 @@ with tab_3:
     )
 
 with tab_4:
-    st.markdown("### Hesaplama Yöntemi ve Detayları")
-    
     st.markdown(
+        f"""
+### Hesaplama yöntemi
+
+**Likidite Durumu = ΔNet Dış Varlıklar + ΔİçVarlıklar + ΔDeğerleme Hesabı
+− ΔDolaşımdaki Para − ΔFon Hesapları − ΔKamu Mevduatı
+− ΔBanka Dışı Kesim Mevduatı**
+
+Net Dış Varlıklar önce stok seviyesinde hesaplanır (Dış Varlıklar − Toplam
+Dış Yükümlülükler), farkı bu seviyeden alınır.
+
+TCMB analitik bilançosunda pasif tarafta izlenen açık piyasa işlemleri
+serisinin birinci farkının işareti çevrilerek **ΔAPİ** elde edilir:
+
+**Hesaplanan Bankalar Mevduatı = Likidite Durumu + ΔAPİ**
+
+**Kontrol Farkı = Hesaplanan Bankalar Mevduatı − Gerçekleşen Bankalar Mevduatı**
+
+Haftalık/aylık/yıllık sıklıkta hesaplama, günlük ortalama alınarak değil,
+her dönemin **son geçerli stok gözlemi** seçilip ardışık dönem sonları
+arasında fark alınarak yapılır.
+
+Kaynak: Engin Yılmaz, *A New Monetary Analysis Tool: The Daily Liquidity
+Dataset*, Ekonomista, 2020 —
+[çalışmaya bağlantı]({METHOD_SOURCE_URL}); TCMB EVDS3 Analitik Bilanço
+verileri.
         """
-        <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 1.2rem; border-radius: 8px; margin-bottom: 1.2rem;">
-        <b>1. Temel Hesaplama Mantığı (Likidite Özdeşliği):</b><br>
-        TCMB analitik bilanço kalemlerinin birinci farkları ($\Delta$) üzerinden piyasanın likidite durumu türetilir:
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    st.latex(
-        r"\text{Likidite Durumu} = \Delta\text{Net Dış Varlıklar} + \Delta\text{İç Varlıklar} + \Delta\text{Değerleme Hesabı} - \Delta\text{Dolaşımdaki Para} - \Delta\text{Fon Hesapları} - \Delta\text{Kamu Mevduatı} - \Delta\text{Banka Dışı Kesim Mevduatı}"
     )
 
-    st.markdown(
-        """
-        * **Net Dış Varlıklar:** Önce stok seviyesinde hesaplanır (aşağıdaki formüle bakın), ardından bu serinin birinci farkı alınır.
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    st.latex(r"\text{Net Dış Varlıklar} = \text{Dış Varlıklar} - \text{Toplam Dış Yükümlülükler}")
+with tab_5:
+    coverage = st.session_state.get("coverage")
+    if not coverage:
+        st.info("Veri kapsamı bilgisi, veriler getirildikten sonra burada görünecek.")
+    else:
+        st.markdown("### Veri kapsamında işlenen dönem bilgileri")
 
-    st.markdown(
-        """
-        * **APİ Katkısı:** TCMB analitik bilançosunda pasif tarafta izlenen Açık Piyasa İşlemleri serisinin birinci farkı, bilanço işaret yapısı gereği $-1$ ile çarpılır.
-        
-        <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 1.2rem; border-radius: 8px; margin-top: 1rem; margin-bottom: 1.2rem;">
-        <b>2. Kontrol Mekanizması:</b><br>
-        Tüm kalemler birinci fark ($\Delta$) bazında hesaplandığı için kontrol ilişkisi <b>mevduat değişimleri</b> üzerinden kurulur:
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    st.latex(r"\Delta\text{Hesaplanan Bankalar Mevduatı} = \text{Likidite Durumu} + \text{Net APİ}")
-    st.latex(r"\text{Kontrol Farkı} = \Delta\text{Hesaplanan Bankalar Mevduatı} - \Delta\text{Gerçekleşen Bankalar Mevduatı}")
+        cov_col1, cov_col2 = st.columns(2)
+        with cov_col1:
+            st.markdown(
+                f"**İstenen dönem:** "
+                f"{coverage['requested_start'].strftime('%d.%m.%Y')}–"
+                f"{coverage['requested_end'].strftime('%d.%m.%Y')}"
+            )
+            st.markdown(
+                f"**Fark hesabı için EVDS'den istenen başlangıç:** "
+                f"{coverage['fetch_start'].strftime('%d.%m.%Y')} "
+                "(önceki dönem stok gözlemini de kapsaması için geriye çekilmiştir)"
+            )
+        with cov_col2:
+            st.markdown(
+                f"**Ham verinin fiilen kapsadığı dönem:** "
+                f"{coverage['raw_min'].strftime('%d.%m.%Y')}–"
+                f"{coverage['raw_max'].strftime('%d.%m.%Y')}"
+            )
+            st.markdown(f"**Ham günlük gözlem sayısı:** {coverage['raw_count']}")
 
-    st.markdown(
-        """
-        <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 1.2rem; border-radius: 8px; margin-top: 1rem; margin-bottom: 1.2rem;">
-        <b>3. Frekans Dönüşümü ve Yıllık/Dönemsel Hesaplama Mantığı:</b><br>
-        Haftalık, aylık veya yıllık sıklıkta hesaplama yapılırken günlük ortalama alınmaz. Her dönemin <b>son geçerli stok gözlemi</b> seçilip ardışık dönem sonları arasında fark ($\Delta$) alınır.
-        </div>
-        
-        * **Yıllık Analizlerde Geriye Dönük Çekim:** Bir yılın (örneğin 2025) yıllık likidite değişimini hesaplayabilmek için sistem, <b>2025 yıl sonu stoku</b> ile bir önceki dönemin sonu olan <b>2024 yıl sonu stoku</b> arasındaki farkı alır. Bu nedenle sistem otomatik olarak bir önceki yılın sonunu da kapsayacak şekilde geriye dönük veri çeker ve ardından hedef yılı filtreleyerek sunar.
-        """,
-        unsafe_allow_html=True,
-    )
+        st.markdown(
+            f"**Hesaplanan {active_freq.lower()} dönem sayısı "
+            f"(seçilen aralığa filtrelendikten sonra):** {coverage['period_count']}"
+        )
 
-    st.divider()
-    st.markdown(
-        f"*Kaynak: Engin Yılmaz, [\"A New Monetary Analysis Tool: The Daily Liquidity Dataset\"]({METHOD_SOURCE_URL}), "
-        f"Ekonomista, 2020; TCMB EVDS3 Analitik Bilanço verileri.*"
-    )
+        if coverage["notes"]:
+            for note in coverage["notes"]:
+                st.warning(note)
+        else:
+            st.success("Ham veri, istenen tarih aralığını ve fark hesabı için gereken önceki dönemi eksiksiz kapsıyor.")
+
+        st.caption(
+            "Bu bölüm, uzun tarih aralıklarında EVDS'nin tek sorguda döndürdüğü "
+            "gözlem sayısı sınırlı olduğu için verinin sessizce kırpılmadığını "
+            "doğrulamanız içindir: veri artık yıllık parçalar hâlinde çekilip "
+            "birleştirilmektedir."
+        )
