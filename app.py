@@ -226,7 +226,7 @@ PAYMENT_SERIES_RENAME = {
 PAYMENT_COLORS = {
     "EFT Toplam Ödeme Tutarı": "#4C72B0",
     "FAST Toplam Ödeme Tutarı": "#55A868",
-    "PÖS Toplam Ödeme Tutarı": "#C44E52",
+    "POS Toplam Ödeme Tutarı": "#C44E52",
     "Serbest Mevduat": "#1A202C",
 }
 
@@ -713,8 +713,13 @@ def create_payment_chart(payment_df, ratio_df, unit):
         ),
     )
 
-    for col in ["EFT Toplam Ödeme Tutarı", "FAST Toplam Ödeme Tutarı",
-                "POS Toplam Ödeme Tutarı", "Serbest Mevduat"]:
+    payment_columns = [
+        "EFT Toplam Ödeme Tutarı",
+        "FAST Toplam Ödeme Tutarı",
+        "POS Toplam Ödeme Tutarı",
+        "Serbest Mevduat",
+    ]
+    for col in payment_columns:
         fig.add_trace(
             go.Scatter(
                 x=labels,
@@ -729,15 +734,14 @@ def create_payment_chart(payment_df, ratio_df, unit):
             row=1, col=1,
         )
 
-        for col in ["EFT Toplam Ödeme Tutarı", "FAST Toplam Ödeme Tutarı",
-                "POS Toplam Ödeme Tutarı", "Serbest Mevduat"]:
-            fig.add_trace(
+    for col in ratio_df.columns:
+        fig.add_trace(
             go.Scatter(
-                x=labels,
-                y=payment_df[col],
+                x=ratio_df.index.strftime("%d-%m-%Y"),
+                y=ratio_df[col],
                 name=col,
                 mode="lines",
-                line=dict(color=PAYMENT_COLORS[col], width=1.6),
+                line=dict(color=RATIO_COLORS.get(col, "#4C72B0"), width=1.6),
                 hovertemplate=f"{col}<br>%{{x}}<br>" + "%{y:.2f} kat<extra></extra>",
             ),
             row=2, col=1,
