@@ -234,7 +234,7 @@ RATIO_COLORS = {
     "Serbest Mevduat / EFT": "#4C72B0",
     "Serbest Mevduat / FAST": "#55A868",
     "Serbest Mevduat / POS": "#C44E52",
-    "(EFT+FAST+POS) / Serbest Mevduat": "#C44E52",
+    "(EFT+FAST+POS) / Serbest Mevduat": "#D53F8C",
 }
 
 
@@ -762,6 +762,11 @@ def create_payment_chart(payment_df, ratio_df, unit):
     fig.update_xaxes(fixedrange=True, row=1, col=1)
     fig.update_xaxes(
         rangeslider_visible=True,
+        rangeslider=dict(
+            bgcolor="#805AD5",
+            bordercolor="#553C9A",
+            borderwidth=1,
+        ),
         rangeslider_thickness=0.08,
         fixedrange=True,
         row=2, col=1,
