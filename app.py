@@ -1066,9 +1066,9 @@ Dış Yükümlülükler), farkı bu seviyeden alınır.
 TCMB analitik bilançosunda pasif tarafta izlenen açık piyasa işlemleri
 serisinin birinci farkının işareti çevrilerek **ΔAPİ** elde edilir:
 
-**Hesaplanan Bankalar Mevduatı = Likidite Durumu + ΔAPİ**
+**ΔHesaplanan Bankalar Mevduatı = Likidite Durumu + ΔAPİ**
 
-**Kontrol Farkı = Hesaplanan Bankalar Mevduatı − Gerçekleşen Bankalar Mevduatı**
+**Kontrol Farkı = ΔHesaplanan Bankalar Mevduatı − ΔGerçekleşen Bankalar Mevduatı**
 
 Haftalık/aylık/yıllık sıklıkta hesaplama, günlük ortalama alınarak değil,
 her dönemin **son geçerli stok gözlemi** seçilip ardışık dönem sonları
