@@ -234,7 +234,7 @@ RATIO_COLORS = {
     "Serbest Mevduat / EFT": "#4C72B0",
     "Serbest Mevduat / FAST": "#55A868",
     "Serbest Mevduat / POS": "#C44E52",
-    "Serbest Mevduat / (EFT+FAST+PÖS)": "#C44E52",
+    "(EFT+FAST+POS) / Serbest Mevduat": "#C44E52",
 }
 
 
@@ -457,15 +457,15 @@ def prepare_payment_data(raw):
 
 
 def compute_payment_ratios(payment_df):
-    """Serbest Mevduatın EFT+FAST+POS toplam günlük ödeme hacmine oranı (kat)."""
+    """EFT+FAST+POS toplam günlük ödeme hacminin Serbest Mevduata oranı (kat)."""
     ratios = pd.DataFrame(index=payment_df.index)
     total_payments = (
         payment_df["EFT Toplam Ödeme Tutarı"]
         + payment_df["FAST Toplam Ödeme Tutarı"]
         + payment_df["POS Toplam Ödeme Tutarı"]
     )
-    ratio = payment_df["Serbest Mevduat"] / total_payments
-    ratios["Serbest Mevduat / (EFT+FAST+POS)"] = ratio.replace([np.inf, -np.inf], np.nan)
+    ratio = total_payments / payment_df["Serbest Mevduat"]
+    ratios["(EFT+FAST+POS) / Serbest Mevduat"] = ratio.replace([np.inf, -np.inf], np.nan)
     return ratios
 
 
@@ -709,7 +709,7 @@ def create_payment_chart(payment_df, ratio_df, unit):
         row_heights=[0.62, 0.38],
         subplot_titles=(
             "EFT, FAST, POS Toplam Ödeme Tutarları ve Serbest Mevduat",
-            "Serbest Mevduatın Ödeme Sistemi Hacimlerine Oranı",
+            "EFT+FAST+POS Toplamının Serbest Mevduata Oranı",
         ),
     )
 
@@ -1140,8 +1140,8 @@ with tab_6:
         render_plot(payment_fig, key="payment_chart")
         st.caption(
             "Üst panel: EFT, FAST, POS toplam ödeme tutarları ve Serbest Mevduat "
-            f"({u_label}, aynı eksende). Alt panel: Serbest Mevduatın bu üç ödeme "
-            "kanalının günlük hacmine oranı (kaç katı). Serbest Mevduat (bin TL) "
+            f"({u_label}, aynı eksende). Alt panel: EFT+FAST+POS toplamının "
+            "Serbest Mevduata oranı (kaç katı). Serbest Mevduat (bin TL) "
             "diğer üç seriyle (TL) ortak birime getirmek için 1000 ile çarpılmıştır."
         )
 
