@@ -226,7 +226,7 @@ PAYMENT_SERIES_RENAME = {
 PAYMENT_COLORS = {
     "EFT Toplam Ödeme Tutarı": "#4C72B0",
     "FAST Toplam Ödeme Tutarı": "#55A868",
-    "POS Toplam Ödeme Tutarı": "#C44E52",
+    "PÖS Toplam Ödeme Tutarı": "#C44E52",
     "Serbest Mevduat": "#1A202C",
 }
 
@@ -234,6 +234,7 @@ RATIO_COLORS = {
     "Serbest Mevduat / EFT": "#4C72B0",
     "Serbest Mevduat / FAST": "#55A868",
     "Serbest Mevduat / POS": "#C44E52",
+    "Serbest Mevduat / (EFT+FAST+PÖS)": "#C44E52",
 }
 
 
@@ -456,15 +457,15 @@ def prepare_payment_data(raw):
 
 
 def compute_payment_ratios(payment_df):
-    """Serbest Mevduatın EFT/FAST/POS günlük ödeme hacimlerine oranı (kat)."""
+    """Serbest Mevduatın EFT+FAST+POS toplam günlük ödeme hacmine oranı (kat)."""
     ratios = pd.DataFrame(index=payment_df.index)
-    for channel, label in [
-        ("EFT Toplam Ödeme Tutarı", "Serbest Mevduat / EFT"),
-        ("FAST Toplam Ödeme Tutarı", "Serbest Mevduat / FAST"),
-        ("POS Toplam Ödeme Tutarı", "Serbest Mevduat / POS"),
-    ]:
-        ratio = payment_df["Serbest Mevduat"] / payment_df[channel]
-        ratios[label] = ratio.replace([np.inf, -np.inf], np.nan)
+    total_payments = (
+        payment_df["EFT Toplam Ödeme Tutarı"]
+        + payment_df["FAST Toplam Ödeme Tutarı"]
+        + payment_df["POS Toplam Ödeme Tutarı"]
+    )
+    ratio = payment_df["Serbest Mevduat"] / total_payments
+    ratios["Serbest Mevduat / (EFT+FAST+POS)"] = ratio.replace([np.inf, -np.inf], np.nan)
     return ratios
 
 
@@ -728,7 +729,7 @@ def create_payment_chart(payment_df, ratio_df, unit):
             row=1, col=1,
         )
 
-    for col in ["Serbest Mevduat / EFT", "Serbest Mevduat / FAST", "Serbest Mevduat / POS"]:
+    for col in ["Serbest Mevduat / (EFT+FAST+POS)"]:
         fig.add_trace(
             go.Scatter(
                 x=labels,
