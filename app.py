@@ -729,14 +729,15 @@ def create_payment_chart(payment_df, ratio_df, unit):
             row=1, col=1,
         )
 
-    for col in ["Serbest Mevduat / (EFT+FAST+POS)"]:
-        fig.add_trace(
+        for col in ["EFT Toplam Ödeme Tutarı", "FAST Toplam Ödeme Tutarı",
+                "POS Toplam Ödeme Tutarı", "Serbest Mevduat"]:
+            fig.add_trace(
             go.Scatter(
                 x=labels,
-                y=ratio_df[col],
+                y=payment_df[col],
                 name=col,
                 mode="lines",
-                line=dict(color=RATIO_COLORS[col], width=1.4),
+                line=dict(color=PAYMENT_COLORS[col], width=1.6),
                 hovertemplate=f"{col}<br>%{{x}}<br>" + "%{y:.2f} kat<extra></extra>",
             ),
             row=2, col=1,
