@@ -75,6 +75,9 @@ st.markdown(
     .js-plotly-plot, .plot-container, .svg-container {
         touch-action: pan-y !important;
     }
+    .js-plotly-plot .rangeslider .scatterlayer path {
+        stroke: #805AD5 !important;
+    }
     div[data-testid="stElementContainer"]:has(.js-plotly-plot) {
         overflow: hidden;
         max-width: 100%;
@@ -763,7 +766,7 @@ def create_payment_chart(payment_df, ratio_df, unit):
     fig.update_xaxes(
         rangeslider_visible=True,
         rangeslider=dict(
-            bgcolor="#805AD5",
+            bgcolor="#FFFFFF",
             bordercolor="#553C9A",
             borderwidth=1,
         ),
