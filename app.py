@@ -21,6 +21,7 @@ from io import BytesIO
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import requests
 import streamlit as st
 
@@ -200,6 +201,42 @@ METHOD_SOURCE_URL = (
     "?filename=A%20New%20Monetary%20Analysis.pdf"
 )
 
+# --------------------------------------------------------------------------
+# Ödeme sistemleri ve serbest mevduat (ayrı, tarih aralığı seçilemeyen bölüm)
+# --------------------------------------------------------------------------
+
+# FAST 2021'de devreye girdiği için bu bölümün başlangıcı sabittir;
+# kullanıcı bu bölüm için tarih aralığı seçemez.
+PAYMENT_START = date(2021, 1, 1)
+
+PAYMENT_SERIES = [
+    "TP.EFTEMKT2.TUTAR_A01",
+    "TP.OSGMFAST.ATO",
+    "TP.OSGMPOS.TUTAR_T01",
+    "TP.AB.A20",
+]
+
+PAYMENT_SERIES_RENAME = {
+    "TP_EFTEMKT2_TUTAR_A01": "EFT Toplam Ödeme Tutarı",
+    "TP_OSGMFAST_ATO": "FAST Toplam Ödeme Tutarı",
+    "TP_OSGMPOS_TUTAR_T01": "POS Toplam Ödeme Tutarı",
+    "TP_AB_A20": "Serbest Mevduat",
+}
+
+PAYMENT_COLORS = {
+    "EFT Toplam Ödeme Tutarı": "#4C72B0",
+    "FAST Toplam Ödeme Tutarı": "#55A868",
+    "POS Toplam Ödeme Tutarı": "#C44E52",
+    "Serbest Mevduat": "#1A202C",
+}
+
+RATIO_COLORS = {
+    "Serbest Mevduat / EFT": "#4C72B0",
+    "Serbest Mevduat / FAST": "#55A868",
+    "Serbest Mevduat / POS": "#C44E52",
+}
+
+
 
 # --------------------------------------------------------------------------
 # Yardımcı biçimlendirme fonksiyonları
@@ -285,7 +322,7 @@ def fetch_evds_chunk(series_tuple, start_date_str, end_date_str, api_key, _cache
     return pd.DataFrame(items)
 
 
-def fetch_evds_range(start_dt, end_dt, api_key, cache_bust):
+def fetch_evds_range(series_tuple, start_dt, end_dt, api_key, cache_bust):
     """İstenen tüm aralığı yıllık parçalar hâlinde çekip birleştirir.
 
     Bir parça başarısız olursa sessizce atlanmaz; hangi aralığın
@@ -296,7 +333,7 @@ def fetch_evds_range(start_dt, end_dt, api_key, cache_bust):
     for chunk_start, chunk_end in year_chunks(start_dt, end_dt):
         try:
             frame = fetch_evds_chunk(
-                tuple(SERIES),
+                series_tuple,
                 chunk_start.strftime("%d-%m-%Y"),
                 chunk_end.strftime("%d-%m-%Y"),
                 api_key,
@@ -369,6 +406,73 @@ def prepare_stock_data(raw):
     df.insert(0, "Net Foreign Assets", net_foreign_assets)
 
     return df.sort_index()
+
+
+# --------------------------------------------------------------------------
+# Ödeme sistemleri ve serbest mevduat verisi
+# --------------------------------------------------------------------------
+
+def prepare_payment_data(raw):
+    date_candidates = [
+        c for c in raw.columns if c.strip().lower() in ("tarih", "date")
+    ]
+    if not date_candidates:
+        raise ValueError(
+            "EVDS yanıtında tarih sütunu bulunamadı. "
+            f"Gelen sütunlar: {', '.join(raw.columns)}"
+        )
+    date_column = date_candidates[0]
+    df = raw.rename(columns={date_column: "Date", **PAYMENT_SERIES_RENAME}).copy()
+
+    missing = [n for n in PAYMENT_SERIES_RENAME.values() if n not in df.columns]
+    if missing:
+        raise ValueError(
+            "EVDS yanıtında beklenen ödeme sistemi serileri bulunamadı: "
+            + ", ".join(missing)
+        )
+
+    df = df[["Date", *PAYMENT_SERIES_RENAME.values()]]
+    df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+    df = df.dropna(subset=["Date"])
+
+    value_columns = list(PAYMENT_SERIES_RENAME.values())
+    df[value_columns] = df[value_columns].apply(pd.to_numeric, errors="coerce")
+    df = df.sort_values("Date").drop_duplicates(subset="Date", keep="last")
+    df = df.set_index("Date")
+
+    for col in value_columns:
+        df[col] = df[col].ffill(limit=2)
+    df = df.dropna(subset=value_columns)
+
+    if df.empty:
+        raise ValueError("Ödeme sistemleri verisinde geçerli gözlem bulunamadı.")
+
+    # Serbest Mevduat (TP.AB.A20) diğer analitik bilanço serileri gibi bin TL
+    # cinsindendir; EFT/FAST/POS toplam ödeme tutarları ise TL cinsindendir.
+    # Ortak birime getirmek için Serbest Mevduat'ı 1000 ile çarpıyoruz.
+    df["Serbest Mevduat"] = df["Serbest Mevduat"] * 1000
+
+    return df.sort_index()
+
+
+def compute_payment_ratios(payment_df):
+    """Serbest Mevduatın EFT/FAST/POS günlük ödeme hacimlerine oranı (kat)."""
+    ratios = pd.DataFrame(index=payment_df.index)
+    for channel, label in [
+        ("EFT Toplam Ödeme Tutarı", "Serbest Mevduat / EFT"),
+        ("FAST Toplam Ödeme Tutarı", "Serbest Mevduat / FAST"),
+        ("POS Toplam Ödeme Tutarı", "Serbest Mevduat / POS"),
+    ]:
+        ratio = payment_df["Serbest Mevduat"] / payment_df[channel]
+        ratios[label] = ratio.replace([np.inf, -np.inf], np.nan)
+    return ratios
+
+
+def scale_payment_data(df, unit):
+    # Bu veri seti artık TL (bin TL değil) cinsindendir; bu yüzden
+    # scale_data'dan farklı bir bölen kullanılır.
+    divisor = 1_000_000_000 if unit == "Milyar TL" else 1_000_000
+    return df / divisor
 
 
 # --------------------------------------------------------------------------
@@ -590,6 +694,75 @@ def create_components_chart(df, unit):
     return fig
 
 
+def create_payment_chart(payment_df, ratio_df, unit):
+    """Üstte EFT/FAST/POS/Serbest Mevduat, altta Serbest Mevduatın bu üç
+    ödeme kanalına oranı — ortak x ekseninde, aşağıdaki alt panelde de
+    işlev gören bir aralık kaydırıcı (rangeslider) ile."""
+    labels = payment_df.index.strftime("%d-%m-%Y")
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.06,
+        row_heights=[0.62, 0.38],
+        subplot_titles=(
+            "EFT, FAST, POS Toplam Ödeme Tutarları ve Serbest Mevduat",
+            "Serbest Mevduatın Ödeme Sistemi Hacimlerine Oranı",
+        ),
+    )
+
+    for col in ["EFT Toplam Ödeme Tutarı", "FAST Toplam Ödeme Tutarı",
+                "POS Toplam Ödeme Tutarı", "Serbest Mevduat"]:
+        fig.add_trace(
+            go.Scatter(
+                x=labels,
+                y=payment_df[col],
+                name=col,
+                mode="lines",
+                line=dict(color=PAYMENT_COLORS[col], width=1.6),
+                hovertemplate=f"{col}<br>%{{x}}<br>"
+                + "%{customdata}<extra></extra>",
+                customdata=[format_tr_with_unit(v, unit_label_for(unit)) for v in payment_df[col]],
+            ),
+            row=1, col=1,
+        )
+
+    for col in ["Serbest Mevduat / EFT", "Serbest Mevduat / FAST", "Serbest Mevduat / POS"]:
+        fig.add_trace(
+            go.Scatter(
+                x=labels,
+                y=ratio_df[col],
+                name=col,
+                mode="lines",
+                line=dict(color=RATIO_COLORS[col], width=1.4),
+                hovertemplate=f"{col}<br>%{{x}}<br>" + "%{y:.2f} kat<extra></extra>",
+            ),
+            row=2, col=1,
+        )
+
+    fig.update_layout(
+        dragmode=False,
+        template="plotly_white",
+        height=640,
+        margin=dict(l=10, r=10, t=60, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="center", x=0.5),
+        hovermode="x unified",
+    )
+    fig.update_yaxes(title_text=unit_label_for(unit).capitalize(), zeroline=True,
+                      zerolinewidth=2, zerolinecolor="black", row=1, col=1, fixedrange=True)
+    fig.update_yaxes(title_text="Oran (kat)", zeroline=True, zerolinewidth=2,
+                      zerolinecolor="black", row=2, col=1, fixedrange=True)
+    fig.update_xaxes(fixedrange=True, row=1, col=1)
+    fig.update_xaxes(
+        rangeslider_visible=True,
+        rangeslider_thickness=0.08,
+        fixedrange=True,
+        row=2, col=1,
+    )
+    return fig
+
+
 # --------------------------------------------------------------------------
 # Excel dışa aktarım
 # --------------------------------------------------------------------------
@@ -679,7 +852,7 @@ if fetch_clicked:
     with st.spinner("EVDS verileri alınıyor ve hesaplamalar yapılıyor..."):
         try:
             raw_data = fetch_evds_range(
-                fetch_start, end_date, api_key, st.session_state["cache_bust"]
+                tuple(SERIES), fetch_start, end_date, api_key, st.session_state["cache_bust"]
             )
             stock_data = prepare_stock_data(raw_data)
 
@@ -732,6 +905,25 @@ if fetch_clicked:
         "notes": coverage_notes,
     }
 
+    # Ödeme sistemleri ve serbest mevduat: tarih aralığı kullanıcı tarafından
+    # seçilemez, her zaman 2021-01-01'den (FAST'in devreye girdiği tarih)
+    # bugüne kadar çekilir. Bu bölümün başarısız olması ana analizi durdurmaz.
+    with st.spinner("Ödeme sistemleri ve serbest mevduat verileri alınıyor..."):
+        try:
+            payment_raw = fetch_evds_range(
+                tuple(PAYMENT_SERIES), PAYMENT_START, date.today(),
+                api_key, st.session_state["cache_bust"],
+            )
+            payment_data = prepare_payment_data(payment_raw)
+            payment_ratios = compute_payment_ratios(payment_data)
+            st.session_state["payment_data"] = payment_data
+            st.session_state["payment_ratios"] = payment_ratios
+            st.session_state["payment_error"] = None
+        except (RuntimeError, ValueError) as error:
+            st.session_state["payment_data"] = None
+            st.session_state["payment_ratios"] = None
+            st.session_state["payment_error"] = str(error)
+
 if "calculated_data" not in st.session_state:
     st.info("Analize başlamak için tarih aralığını, sıklığı seçip **Verileri Getir** düğmesine basın.")
     st.stop()
@@ -769,8 +961,11 @@ c2.metric("ΔAPİ", format_tr_with_unit(latest["OMO"], u_label))
 c3.metric("Bankalar Mevduatı Değişimi", format_tr_with_unit(latest["Banking Reserves"], u_label))
 c4.metric("Kontrol Farkı", format_tr_with_unit(latest["Control Difference"], u_label))
 
-tab_1, tab_2, tab_3, tab_4, tab_5 = st.tabs(
-    ["Genel Görünüm", "Likidite Bileşenleri", "Veri Tablosu", "Yöntem", "Veri Kapsamı"]
+tab_1, tab_2, tab_3, tab_4, tab_5, tab_6 = st.tabs(
+    [
+        "Genel Görünüm", "Likidite Bileşenleri", "Veri Tablosu", "Yöntem",
+        "Veri Kapsamı", "Ödeme Sistemleri",
+    ]
 )
 
 with tab_1:
@@ -916,3 +1111,44 @@ with tab_5:
             "doğrulamanız içindir: veri artık yıllık parçalar hâlinde çekilip "
             "birleştirilmektedir."
         )
+
+with tab_6:
+    payment_data = st.session_state.get("payment_data")
+    payment_ratios = st.session_state.get("payment_ratios")
+    payment_error = st.session_state.get("payment_error")
+
+    st.markdown(
+        f"**Kapsam:** {PAYMENT_START.strftime('%d.%m.%Y')}–{date.today().strftime('%d.%m.%Y')} "
+        "· bu bölümde tarih aralığı seçilemez (FAST 2021'de devreye girdiği için "
+        "başlangıç sabittir); yakınlaştırma/kaydırma için grafiğin altındaki "
+        "aralık kaydırıcıyı kullanın."
+    )
+
+    if payment_error:
+        st.warning(f"Ödeme sistemleri verisi alınamadı: {payment_error}")
+    elif payment_data is None:
+        st.info("Bu bölümün verisi, **Verileri Getir** düğmesine bastığınızda ana veriyle birlikte çekilir.")
+    else:
+        payment_display = scale_payment_data(payment_data, active_unit)
+        payment_fig = create_payment_chart(payment_display, payment_ratios, active_unit)
+        render_plot(payment_fig, key="payment_chart")
+        st.caption(
+            "Üst panel: EFT, FAST, POS toplam ödeme tutarları ve Serbest Mevduat "
+            f"({u_label}, aynı eksende). Alt panel: Serbest Mevduatın bu üç ödeme "
+            "kanalının günlük hacmine oranı (kaç katı). Serbest Mevduat (bin TL) "
+            "diğer üç seriyle (TL) ortak birime getirmek için 1000 ile çarpılmıştır."
+        )
+
+        with st.expander("Veri tablosunu göster"):
+            payment_cols = list(PAYMENT_SERIES_RENAME.values())
+            table_payment = payment_display[payment_cols].copy()
+            for ratio_col in payment_ratios.columns:
+                table_payment[ratio_col] = payment_ratios[ratio_col]
+            table_payment.index = table_payment.index.strftime("%d.%m.%Y")
+            table_payment.index.name = "Tarih"
+            table_view = select_row_count(table_payment, key="payment_table_rows")
+            st.dataframe(table_view.style.format(format_tr_number))
+            st.caption(
+                f"EFT/FAST/POS/Serbest Mevduat sütunları {u_label} cinsindendir; "
+                "oran sütunları katsayı (kat) olarak gösterilir."
+            )
