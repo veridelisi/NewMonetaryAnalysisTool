@@ -832,7 +832,7 @@ with st.sidebar:
     start_date = st.date_input("Başlangıç tarihi", value=default_start, format="DD/MM/YYYY")
     end_date = st.date_input("Bitiş tarihi", value=default_end, format="DD/MM/YYYY")
     frequency = st.selectbox("Veri sıklığı", FREQ_LABELS, index=0)
-    unit = st.radio("Gösterim birimi", ["Milyar TL", "Milyon TL"], index=0)
+    unit = st.radio("Gösterim birimi", ["Milyar TL"], index=0)
 
     col_a, col_b = st.columns(2)
     fetch_clicked = col_a.button("Verileri Getir", type="primary", use_container_width=True)
